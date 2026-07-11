@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IQ Cutting — محسّن قص الألواح</title>
+  <link rel="icon" href="icon-192.png">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#b5803c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="IQ Cutting">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <noscript>يجب تفعيل JavaScript لتشغيل هذا التطبيق.</noscript>
+
+  <!-- ==================== شاشة المصادقة ==================== -->
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-header">
+        <img src="logo.jpeg" alt="IQ Cutting" class="auth-logo">
+        <h1>IQ Cutting</h1>
+        <p>نظام ذكي لتخطيط وتحسين قص ألواح الأخشاب</p>
+      </div>
+
+      <!-- رسالة الحالة -->
+      <div id="authMsg" class="auth-msg"></div>
+
+      <!-- أزرار تبديل طريقة الدخول -->
+      <div class="auth-methods">
+        <button id="btnShowEmail" class="btn auth-method-btn active">البريد الإلكتروني</button>
+        <button id="btnShowPhone" class="btn auth-method-btn">رقم الهاتف</button>
+        <button id="btnShowRegister" class="btn auth-method-btn">حساب جديد</button>
+      </div>
+
+      <!-- قسم تسجيل الدخول بالبريد -->
+      <div id="emailSection" class="auth-section">
+        <label>البريد الإلكتروني
+          <input type="email" id="authEmail" placeholder="example@email.com" autocomplete="email">
+        </label>
+        <label>كلمة المرور
+          <input type="password" id="authPass" placeholder="••••••" autocomplete="current-password">
+        </label>
+        <button id="btnLogin" class="btn btn-primary btn-block">دخول</button>
+        <button id="btnReset" class="btn btn-link">نسيت كلمة المرور؟</button>
+      </div>
+
+      <!-- قسم تسجيل الدخول بالهاتف -->
+      <div id="phoneSection" class="auth-section hidden">
+        <label>رقم الهاتف (مع رمز الدولة)
+          <input type="tel" id="authPhone" placeholder="+963991123456" autocomplete="tel">
+        </label>
+        <button id="btnSendOtp" class="btn btn-primary btn-block">إرسال رمز التحقق</button>
+        <div id="recaptchaContainer"></div>
+      </div>
+
+      <!-- قسم التحقق من OTP -->
+      <div id="phoneVerifySection" class="auth-section hidden">
+        <label>رمز التحقق (6 أرقام)
+          <input type="number" id="authOtp" placeholder="123456" maxlength="6" inputmode="numeric">
+        </label>
+        <button id="btnVerifyOtp" class="btn btn-primary btn-block">تحقق ودخول</button>
+      </div>
+
+      <!-- قسم حساب جديد -->
+      <div id="registerSection" class="auth-section hidden">
+        <label>الاسم الكامل
+          <input type="text" id="regName" placeholder="اسمك هنا" autocomplete="name">
+        </label>
+        <label>البريد الإلكتروني
+          <input type="email" id="regEmail" placeholder="example@email.com" autocomplete="email">
+        </label>
+        <label>كلمة المرور (6 أحرف على الأقل)
+          <input type="password" id="regPass" placeholder="••••••" autocomplete="new-password">
+        </label>
+        <label>تأكيد كلمة المرور
+          <input type="password" id="regPass2" placeholder="••••••" autocomplete="new-password">
+        </label>
+        <button id="btnRegister" class="btn btn-primary btn-block">إنشاء حساب</button>
+      </div>
+
+      <!-- قسم استعادة كلمة المرور -->
+      <div id="resetSection" class="auth-section hidden">
+        <label>أدخل بريدك الإلكتروني لاستعادة كلمة المرور
+          <input type="email" id="resetEmail" placeholder="example@email.com">
+        </label>
+        <button id="btnSendReset" class="btn btn-primary btn-block">إرسال رابط الاستعادة</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ==================== محتوى التطبيق الرئيسي (مخفى حتى تسجيل الدخول) ==================== -->
+  <div id="appContent" class="hidden">
+    <header class="app-header">
+      <div class="brand">
+        <img src="logo.jpeg" alt="IQ Cutting" class="logo">
+        <div class="brand-text">
+          <h1>IQ Cutting</h1>
+          <span>نظام ذكي لتخطيط وتحسين قص ألواح الأخشاب — أقل هدر، أعلى ربحية</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <!-- معلومات المستخدم + حالة الاشتراك -->
+        <div id="userBadge" class="user-badge hidden">
+          <span id="userBadgeName" class="user-badge-name"></span>
+          <span id="userBadgeStatus" class="user-badge-status"></span>
+        </div>
+        <button id="btnNew" class="btn">🆕 مشروع جديد</button>
+        <button id="btnLogout" class="btn btn-danger">خروج</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- لوحة الإدخال -->
+      <aside class="sidebar">
+        <!-- إعدادات اللوح -->
+        <section class="card">
+          <h2>1) إعدادات العمل والألواح الخام</h2>
+          <label class="block">اسم المشروع
+            <input type="text" id="planName" placeholder="مثال: مطبخ منزل العميل أحمد">
+          </label>
+
+          <h3 class="subh">خامات الألواح</h3>
+          <div class="table-wrap">
+            <table class="mini-table" id="sheetTable">
+              <thead><tr>
+                <th>خامة اللوح</th><th>الطول</th><th>العرض</th><th>العدد</th><th>السعر $</th><th>عرق</th><th></th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <button class="btn btn-sm" id="addSheet">+ إضافة نوع لوح</button>
+          <div id="activeSheetsContainer" class="active-sheets-container">
+            <label class="block" style="font-weight:700;margin-top:8px">الألواح النشطة:</label>
+            <div id="activeSheetsCheckboxes"></div>
+          </div>
+
+          <div class="grid2" style="margin-top:10px">
+            <label>سُمك المنشار/الحرف (سم)<input type="number" id="kerf" placeholder="0" step="0.1" min="0"></label>
+            <label>أجرة قص اللوح فقط ($/لوح)<input type="number" id="cutFee" placeholder="0" step="0.01" min="0"></label>
+          </div>
+          <label class="block">اتجاه القص الأساسي
+            <select id="cutDir">
+              <option value="length">طولي (Rip — موازٍ للطول)</option>
+              <option value="cross">عرضي (Cross — موازٍ للعرض)</option>
+              <option value="free">حر (يختار التطبيق الأفضل تلقائياً)</option>
+            </select>
+          </label>
+          <div class="toggles">
+            <label class="chk" id="rotateLabel" style="display:none"><input type="checkbox" id="allowRotate"> السماح بتدوير القطعة</label>
+          </div>
+        </section>
+
+        <!-- أنواع حرف التلبيس -->
+        <section class="card">
+          <h2>2) أنواع حرف التلبيس (الأسعار بالدولار $)</h2>
+          <table class="mini-table" id="bandTable">
+            <thead><tr><th>النوع</th><th>السعر $/متر</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <button class="btn btn-sm" id="addBand">+ إضافة نوع</button>
+        </section>
+
+        <!-- صورة مرجعية -->
+        <section class="card">
+          <h2>📷 صورة مرجعية (اختياري)</h2>
+          <p class="hint">التقط صورة للورقة بها المقاسات كمرجع أثناء الإدخال</p>
+          <input type="file" id="pieceImage" accept="image/*" capture="environment" style="display:none">
+          <button class="btn btn-sm" id="btnPieceImage">📷 اختيار صورة / التقط صورة</button>
+          <div id="pieceImagePreview" class="hidden" style="margin-top:8px">
+            <img id="pieceImageImg" style="max-width:100%;border-radius:8px;border:1px solid #ddd">
+            <button class="btn btn-sm btn-danger" id="btnRemoveImage" style="margin-top:4px">✕ إزالة الصورة</button>
+          </div>
+        </section>
+
+        <!-- القطع المطلوبة -->
+        <section class="card">
+          <div class="pieces-head">
+            <h2>3) القطع المطلوبة</h2>
+            <button id="toggleExtra" class="btn btn-sm extra-toggle" type="button">⚙ خيارات إضافية</button>
+          </div>
+          <div class="table-wrap">
+            <table class="mini-table" id="pieceTable">
+              <thead>
+                <tr>
+                  <th>الطول</th><th>العرض</th><th>العدد</th><th>خامة</th><th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="piece-btns">
+            <button class="btn btn-sm" id="addPiece">+ إضافة قطعة</button>
+            <button class="btn btn-sm" id="addPiece10">+ إضافة ١٠ صفوف</button>
+          </div>
+          <p class="hint">أدخل <b>الطول × العرض × العدد</b> فقط لإدخال سريع. زر <b>⚙ خيارات إضافية</b> بالأعلى يُفعّل (لمرة واحدة) إظهار الاسم ونوع الحرف ومكان التلبيس لكل القطع، ويُلغى تلقائياً عند بدء مشروع جديد.</p>
+        </section>
+      </aside>
+
+      <!-- لوحة النتائج -->
+      <section class="results">
+        <div id="statsBar" class="stats-bar"></div>
+        <div id="emptyState" class="empty-state">
+          <img src="logo.jpeg" alt="" class="empty-logo">
+          <p>أدخل بيانات اللوح والقطع ثم اضغط <b>«توليد المخطط»</b> لرؤية المخططات.</p>
+        </div>
+        <div id="sheetsArea" class="sheets-area"></div>
+        <p id="dragHint" class="hint hidden">💡 <b>اضغط مع الاستمرار</b> على أي قطعة حتى ترتفع ثم اسحبها. عند الإفلات <b>تلتصق مغناطيسياً</b> بحافة أقرب قطعة تاركةً فاصل سُمك المنشار فقط — على خط قص مستقيم. يمكن نقلها بين الألواح وتتحدّث الإحصائيات تلقائياً.</p>
+        <!-- شريط الإجراءات السفلي -->
+        <div id="resultsActions" class="results-actions">
+          <span class="band-legend"><i class="band-swatch"></i> حرف التلبيس (التقشيط)</span>
+          <div class="results-actions-btns">
+            <button id="btnOptimize" class="btn btn-primary btn-lg">⚙️ توليد المخطط</button>
+            <button id="btnPdf" class="btn btn-ghost btn-lg">📄 حفظ المشروع PDF</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- حاوية تقرير الـ PDF (مخفية) -->
+    <div id="pdfReport" class="pdf-report"></div>
+
+    <!-- نافذة خيارات الحفظ قبل إنشاء PDF -->
+    <div id="pdfOptModal" class="pdf-modal hidden">
+      <div class="pdf-modal-box pdf-opt-box">
+        <div class="pdf-modal-head">
+          <span class="pdf-modal-title">📄 خيارات حفظ المشروع PDF</span>
+          <button id="pdfOptCancel" class="btn btn-danger" type="button">✕</button>
+        </div>
+        <div class="pdf-opt-body">
+          <label class="block">اسم الملف / المشروع
+            <input type="text" id="pdfName" placeholder="مثال: مطبخ منزل العميل أحمد">
+          </label>
+          <div class="pdf-opt-h">البيانات المُضمّنة في التقرير</div>
+          <label class="chk"><input type="checkbox" id="optSummary" checked> صفحة الملخص الشامل للمشروع</label>
+          <label class="chk"><input type="checkbox" id="optSheetData" checked> بيانات كل لوح (قطع · قصّات · استفادة · هدر · تلبيس)</label>
+          <label class="chk"><input type="checkbox" id="optCutOrder" checked> ترتيب عمليات القص لكل لوح</label>
+          <label class="chk"><input type="checkbox" id="optBanding" checked> تفصيل التلبيس حسب النوع</label>
+          <label class="chk"><input type="checkbox" id="optCosts" checked> التكاليف والأسعار</label>
+          <p class="hint">📍 مكان الحفظ: يُحفظ الملف بالاسم أعلاه، ويسألك المتصفح/الجهاز عن مجلد الحفظ عند التنزيل (أو يضعه في مجلد «التنزيلات»).</p>
+        </div>
+        <div class="pdf-modal-actions pdf-opt-actions">
+          <button id="pdfOptGo" class="btn btn-primary btn-lg" type="button">📄 إنشاء وحفظ PDF</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- نافذة عرض/حفظ ملف PDF -->
+    <div id="pdfModal" class="pdf-modal hidden">
+      <div class="pdf-modal-box">
+        <div class="pdf-modal-head">
+          <span class="pdf-modal-title">📄 ملف PDF جاهز — IQ Cutting</span>
+          <div class="pdf-modal-actions">
+            <a id="pdfDownload" class="btn btn-primary" download>⬇️ تنزيل</a>
+            <a id="pdfOpen" class="btn" target="_blank" rel="noopener">↗️ فتح في تبويب</a>
+            <button id="pdfPrint" class="btn" type="button">🖨️ طباعة / حفظ</button>
+            <button id="pdfClose" class="btn btn-danger" type="button">✕ إغلاق</button>
+          </div>
+        </div>
+        <iframe id="pdfFrame" class="pdf-frame" title="معاينة PDF"></iframe>
+        <p class="pdf-modal-hint">إن لم يبدأ التنزيل تلقائياً: استخدم زر «تنزيل» بالأعلى، أو زر التنزيل داخل عارض الـ PDF، أو «طباعة / حفظ» ثم اختر «حفظ كـ PDF» (يعمل على الجوال والكمبيوتر).</p>
+      </div>
+    </div>
+  </div><!-- نهاية appContent -->
+
+  <!-- ==================== نوافذ عامة (خارج appContent) ==================== -->
+  <div id="toast" class="toast hidden"></div>
+  <button id="btnInstall" class="install-fab hidden">⬇️ تثبيت التطبيق على الهاتف</button>
+
+  <!-- ==================== السكريبتات ==================== -->
+
+  <!-- Firebase Compat SDK (يعمل مباشرة بدون سيرفر) -->
+  <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
+
+  <!-- تهيئة Firebase -->
+  <script src="firebase-config.js"></script>
+
+  <!-- خدمات Firestore والصلاحيات -->
+  <script src="firestore-db.js"></script>
+  <script src="access-control.js"></script>
+  <script src="admin.js"></script>
+
+  <!-- المصادقة (تتوقف على admin.js لتحميل لوحة المدير) -->
+  <script src="auth.js"></script>
+
+  <!-- التطبيق الرئيسي -->
+  <script src="app.js"></script>
+
+  <script>
+    // تسجيل Service Worker (للعمل دون إنترنت بعد الاستضافة)
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('sw.js').catch(function() {});
+      });
+    }
+    // زر التثبيت (يظهر تلقائياً على المتصفحات الداعمة)
+    var deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+      e.preventDefault(); deferredPrompt = e;
+      document.getElementById('btnInstall').classList.remove('hidden');
+    });
+    document.getElementById('btnInstall').addEventListener('click', function() {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(function() {
+        deferredPrompt = null;
+        document.getElementById('btnInstall').classList.add('hidden');
+      });
+    });
+  </script>
+</body>
+</html>
