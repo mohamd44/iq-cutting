@@ -712,6 +712,8 @@ window.addEventListener('resize',()=>{ if(layout) liveCanvases.forEach(c=>{ if(c
 const HOLD_MS=200;
 const MOVE_TOL=9;
 let drag=null;
+let _floatingListenersAttached=false;
+let _floatingFollowing=false;
 
 function startDrag(e){
   if(e.button && e.button!==0) return;
@@ -719,6 +721,14 @@ function startDrag(e){
   const canvas=el.parentElement;
   const r=el.getBoundingClientRect();
   const mi=+canvas.dataset.materialIdx, si=+canvas.dataset.sheetIdx, pi=+el.dataset.pi;
+
+  if(drag && drag.lifted){
+    if(drag.fromMaterialIdx===mi && drag.fromSheetIdx===si && drag.fromPieceIdx===pi){
+      dropFloating(); return;
+    }
+    cancelLift();
+  }
+
   drag={ el, canvas, fromMaterialIdx:mi, fromSheetIdx:si, fromPieceIdx:pi,
          piece:layout[mi].sheets[si].pieces[pi],
          offX:e.clientX-r.left, offY:e.clientY-r.top, w:r.width, h:r.height,
@@ -738,7 +748,6 @@ function lift(){
   const el=drag.el;
   el.classList.add('lifting');
   if(navigator.vibrate) try{ navigator.vibrate(25); }catch(_){}
-  const r=el.getBoundingClientRect();
   const cs=getComputedStyle(el);
   const ghost=document.createElement('div');
   ghost.style.cssText='position:fixed;pointer-events:none;z-index:9999;border:2px solid #b5803c;border-radius:4px;background:'+cs.background+';box-shadow:0 14px 32px rgba(0,0,0,.38);opacity:.92;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#1f2933;text-align:center;overflow:hidden';
@@ -758,6 +767,7 @@ function moveFixed(x,y){
 }
 
 function highlightTarget(x,y){
+  if(!drag) return;
   drag.el.style.pointerEvents='none';
   drag.el.style.visibility='hidden';
   const t=document.elementFromPoint(x,y);
@@ -778,70 +788,86 @@ function onDrag(e){
   highlightTarget(e.clientX,e.clientY);
 }
 
-function cancelDrag(){
-  if(!drag) return;
-  clearTimeout(drag.timer);
-  drag.el.classList.remove('armed','lifting');
-  if(drag.ghost){ drag.ghost.remove(); drag.ghost=null; }
-  document.removeEventListener('pointermove',onDrag);
-  document.removeEventListener('pointerup',endDrag);
-  document.removeEventListener('pointercancel',cancelDrag);
-  drag=null;
-}
-
-function overlapsAny(mi, si, piece, x, y, exceptIdx){
+function overlapsAny(mi,si,piece,x,y,exceptIdx){
   const ps=layout[mi].sheets[si].pieces;
   for(let i=0;i<ps.length;i++){
     if(i===exceptIdx) continue;
     const o=ps[i];
-    if(x < o.x+o.l && x+piece.l > o.x && y < o.y+o.w && y+piece.w > o.y) return true;
+    if(x<o.x+o.l&&x+piece.l>o.x&&y<o.y+o.w&&y+piece.w>o.y) return true;
   }
   return false;
 }
-function findFreeSpot(mi, si, piece, wx, wy, exceptIdx){
+function findFreeSpot(mi,si,piece,wx,wy,exceptIdx){
   if(!overlapsAny(mi,si,piece,wx,wy,exceptIdx)) return {x:wx,y:wy};
-  const L=layout[mi].L, W=layout[mi].W;
-  const step=2, maxX=L-piece.l, maxY=W-piece.w;
-  let best=null, bestD=Infinity;
-  for(let gy=0; gy<=maxY+0.001; gy+=step){
-    for(let gx=0; gx<=maxX+0.001; gx+=step){
+  const L=layout[mi].L,W=layout[mi].W;
+  const step=2,maxX=L-piece.l,maxY=W-piece.w;
+  let best=null,bestD=Infinity;
+  for(let gy=0;gy<=maxY+0.001;gy+=step){
+    for(let gx=0;gx<=maxX+0.001;gx+=step){
       if(!overlapsAny(mi,si,piece,gx,gy,exceptIdx)){
         const d=(gx-wx)*(gx-wx)+(gy-wy)*(gy-wy);
-        if(d<bestD){ bestD=d; best={x:gx,y:gy}; }
+        if(d<bestD){bestD=d;best={x:gx,y:gy};}
       }
     }
   }
   return best;
 }
-
-function magnetSnap(mi, si, piece, nx, ny, exceptIdx){
-  const ps=layout[mi].sheets[si].pieces, kerf=settings.kerf||0;
-  const L=layout[mi].L, W=layout[mi].W;
-  const maxX=L-piece.l, maxY=W-piece.w;
+function magnetSnap(mi,si,piece,nx,ny,exceptIdx){
+  const ps=layout[mi].sheets[si].pieces,kerf=settings.kerf||0;
+  const L=layout[mi].L,W=layout[mi].W;
+  const maxX=L-piece.l,maxY=W-piece.w;
   const cand=[];
-  const add=(x,y)=>{
-    x=Math.max(0,Math.min(x,maxX)); y=Math.max(0,Math.min(y,maxY));
-    cand.push({x,y});
-  };
-  add(0,0); add(maxX,0); add(0,maxY); add(maxX,maxY);
-  ps.forEach((o,i)=>{ if(i===exceptIdx) return;
-    const right=o.x+o.l+kerf, left=o.x-piece.l-kerf;
-    const below=o.y+o.w+kerf, above=o.y-piece.w-kerf;
-    const yTop=o.y, yBot=o.y+o.w-piece.w;
-    const xLeft=o.x, xRight=o.x+o.l-piece.l;
-    add(right,yTop); add(right,yBot);
-    add(left,yTop);  add(left,yBot);
+  const add=(x,y)=>{x=Math.max(0,Math.min(x,maxX));y=Math.max(0,Math.min(y,maxY));cand.push({x,y});};
+  add(0,0);add(maxX,0);add(0,maxY);add(maxX,maxY);
+  ps.forEach((o,i)=>{if(i===exceptIdx) return;
+    const right=o.x+o.l+kerf,left=o.x-piece.l-kerf;
+    const below=o.y+o.w+kerf,above=o.y-piece.w-kerf;
+    const yTop=o.y,yBot=o.y+o.w-piece.w;
+    const xLeft=o.x,xRight=o.x+o.l-piece.l;
+    add(right,yTop);add(right,yBot);
+    add(left,yTop);add(left,yBot);
     add(xLeft,below);add(xRight,below);
     add(xLeft,above);add(xRight,above);
   });
-  let best=null, bd=Infinity;
+  let best=null,bd=Infinity;
   for(const c of cand){
     if(c.x<-0.01||c.x>maxX+0.01||c.y<-0.01||c.y>maxY+0.01) continue;
     if(overlapsAny(mi,si,piece,c.x,c.y,exceptIdx)) continue;
     const d=(c.x-nx)*(c.x-nx)+(c.y-ny)*(c.y-ny);
-    if(d<bd){ bd=d; best=c; }
+    if(d<bd){bd=d;best=c;}
   }
   return best;
+}
+
+function tryPlaceAt(x,y){
+  if(!drag||!drag.lifted||!drag.ghost) return false;
+  drag.el.style.pointerEvents='none';drag.el.style.visibility='hidden';
+  const target=document.elementFromPoint(x,y);
+  drag.el.style.pointerEvents='';drag.el.style.visibility='';
+  const tCanvas=target?(target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
+  if(!tCanvas) return false;
+  const toMi=+tCanvas.dataset.materialIdx,toSi=+tCanvas.dataset.sheetIdx;
+  if(toMi!==drag.fromMaterialIdx){toast('⚠️ لا يمكن نقل القطعة إلى خامة مختلفة');return true;}
+  const matL=layout[toMi].L,matW=layout[toMi].W;
+  if(drag.piece.l>matL+0.01||drag.piece.w>matW+0.01){toast('⚠️ القطعة أكبر من اللوح — رُفض');return true;}
+  const cr=tCanvas.getBoundingClientRect();
+  const scale=tCanvas.clientWidth/matL;
+  let nx=(x-cr.left)/scale;
+  let ny=(y-cr.top)/scale;
+  nx=Math.max(0,Math.min(nx,matL-drag.piece.l));
+  ny=Math.max(0,Math.min(ny,matW-drag.piece.w));
+  const except=(toMi===drag.fromMaterialIdx&&toSi===drag.fromSheetIdx)?drag.fromPieceIdx:-1;
+  let pos=magnetSnap(toMi,toSi,drag.piece,nx,ny,except);
+  if(!pos) pos=findFreeSpot(toMi,toSi,drag.piece,nx,ny,except);
+  if(!pos){toast('⚠️ لا يوجد مكان كافٍ في هذا اللوح');return true;}
+  drag.piece.x=Math.round(pos.x*10)/10;drag.piece.y=Math.round(pos.y*10)/10;
+  if(toSi!==drag.fromSheetIdx){
+    layout[drag.fromMaterialIdx].sheets[drag.fromSheetIdx].pieces.splice(drag.fromPieceIdx,1);
+    layout[toMi].sheets[toSi].pieces.push(drag.piece);
+    layout[drag.fromMaterialIdx].sheets=layout[drag.fromMaterialIdx].sheets.filter(s=>s.pieces.length>0);
+    layout=layout.filter(mg=>mg.sheets.length>0);
+  }
+  return true;
 }
 
 function endDrag(e){
@@ -850,57 +876,174 @@ function endDrag(e){
   document.removeEventListener('pointermove',onDrag);
   document.removeEventListener('pointerup',endDrag);
   document.removeEventListener('pointercancel',cancelDrag);
+
+  if(!drag.lifted){drag.el.classList.remove('armed');drag=null;return;}
+
+  const placed=tryPlaceAt(drag.lastX,drag.lastY);
+  if(placed){
+    if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
+    drag.el.classList.remove('lifting','armed');
+    liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+    drag=null;refreshLive();return;
+  }
+
   liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+  if(navigator.vibrate) try{navigator.vibrate(15);}catch(_){}
+  enterFloating();
+}
 
-  if(!drag.lifted){ drag.el.classList.remove('armed'); drag=null; return; }
+function enterFloating(){
+  if(!drag||!drag.lifted||!drag.ghost) return;
+  drag.el.style.opacity='0.3';
+  drag.el.style.pointerEvents='none';
+  _floatingFollowing=false;
+  if(!_floatingListenersAttached){
+    _floatingListenersAttached=true;
+    document.addEventListener('pointermove',_onFloatingMove);
+    document.addEventListener('pointerup',_onFloatingUp);
+    document.addEventListener('pointercancel',_onFloatingUp);
+    document.addEventListener('pointerdown',_onFloatingPointerDown,true);
+    document.addEventListener('keydown',_onFloatingKey);
+  }
+}
 
-  const el=drag.el, piece=drag.piece;
-  if(drag.ghost){ drag.ghost.remove(); drag.ghost=null; }
-  el.classList.remove('lifting');
+function _onFloatingMove(e){
+  if(!drag||!drag.lifted||!drag.ghost) return;
+  drag.lastX=e.clientX;drag.lastY=e.clientY;
+  moveFixed(e.clientX,e.clientY);
+  highlightTarget(e.clientX,e.clientY);
+}
 
-  el.style.pointerEvents='none';
-  el.style.visibility='hidden';
-  const target=document.elementFromPoint(drag.lastX,drag.lastY);
-  el.style.pointerEvents=''; el.style.visibility='';
-  const tCanvas=target?(target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
+function _onFloatingUp(e){
+  if(!drag||!drag.lifted||!_floatingFollowing) return;
+  _floatingFollowing=false;
+  const placed=tryPlaceAt(drag.lastX,drag.lastY);
+  if(placed){
+    _detachFloating();
+    if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
+    drag.el.classList.remove('lifting','armed');
+    liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+    drag=null;refreshLive();
+    toast('✅ تم وضع القطعة بنجاح');
+  } else {
+    liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+  }
+}
 
-  if(tCanvas){
-    const toMi=+tCanvas.dataset.materialIdx;
-    const toSi=+tCanvas.dataset.sheetIdx;
-    if(toMi!==drag.fromMaterialIdx){
-      toast('\u26a0\ufe0f لا يمكن نقل القطعة إلى خامة مختلفة');
-    } else {
-      const matL=layout[toMi].L, matW=layout[toMi].W;
-      if(piece.l>matL+0.01 || piece.w>matW+0.01){
-        toast('\u26a0\ufe0f القطعة أكبر من اللوح \u2014 رُفض الإفلات');
-      } else {
-        const cr=tCanvas.getBoundingClientRect();
-        const scale=tCanvas.clientWidth/matL;
-        let nx=(drag.lastX-cr.left-drag.offX)/scale;
-        let ny=(drag.lastY-cr.top-drag.offY)/scale;
-        nx=Math.max(0,Math.min(nx,matL-piece.l));
-        ny=Math.max(0,Math.min(ny,matW-piece.w));
-        const except = (toMi===drag.fromMaterialIdx && toSi===drag.fromSheetIdx) ? drag.fromPieceIdx : -1;
-        let pos = magnetSnap(toMi,toSi,piece,nx,ny,except);
-        if(!pos) pos = findFreeSpot(toMi,toSi,piece,nx,ny,except);
-        if(!pos){
-          toast('\u26a0\ufe0f لا يوجد مكان كافٍ في هذا اللوح');
-        } else {
-          piece.x=Math.round(pos.x*10)/10; piece.y=Math.round(pos.y*10)/10;
-          if(toSi!==drag.fromSheetIdx){
-            layout[drag.fromMaterialIdx].sheets[drag.fromSheetIdx].pieces.splice(drag.fromPieceIdx,1);
-            layout[toMi].sheets[toSi].pieces.push(piece);
-            layout[drag.fromMaterialIdx].sheets=layout[drag.fromMaterialIdx].sheets.filter(s=>s.pieces.length>0);
-            layout=layout.filter(mg=>mg.sheets.length>0);
-          }
-        }
-      }
+function _onFloatingPointerDown(e){
+  if(!drag||!drag.lifted) return;
+
+  if(_floatingFollowing){
+    return;
+  }
+
+  const ghost=drag.ghost;
+  if(ghost){
+    const gx=parseFloat(ghost.style.left)+drag.w/2;
+    const gy=parseFloat(ghost.style.top)+drag.h/2;
+    drag.offX=drag.w/2;drag.offY=drag.h/2;
+    drag.lastX=gx;drag.lastY=gy;
+    drag.startX=e.clientX;drag.startY=e.clientY;
+  }
+  drag.el.style.pointerEvents='none';drag.el.style.visibility='hidden';
+  const target=document.elementFromPoint(e.clientX,e.clientY);
+  drag.el.style.pointerEvents='';drag.el.style.visibility='';
+
+  const clickedPiece=target?target.closest('.piece'):null;
+  if(clickedPiece && clickedPiece.dataset.pi!=null){
+    const ci=+clickedPiece.dataset.pi;
+    const si=+clickedPiece.dataset.sheetIdx;
+    const mi=+clickedPiece.dataset.materialIdx;
+    if(mi===drag.fromMaterialIdx && si===drag.fromSheetIdx && ci===drag.fromPieceIdx){
+      cancelLift();return;
+    }
+    cancelLift();return;
+  }
+
+  const onCanvas=target?(target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
+  if(onCanvas){
+    _floatingFollowing=true;
+    moveFixed(e.clientX,e.clientY);
+    highlightTarget(e.clientX,e.clientY);
+  } else {
+    const placed=tryPlaceAt(e.clientX,e.clientY);
+    if(placed){
+      _detachFloating();
+      if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
+      drag.el.classList.remove('lifting','armed');
+      drag=null;refreshLive();
+      toast('✅ تم وضع القطعة بنجاح');
     }
   }
-  el.classList.remove('lifting');
-  el.style.pointerEvents=''; el.style.visibility='';
+}
+
+function _onFloatingKey(e){
+  if(e.key==='Escape') cancelLift();
+}
+
+function _detachFloating(){
+  _floatingListenersAttached=false;
+  _floatingFollowing=false;
+  document.removeEventListener('pointermove',_onFloatingMove);
+  document.removeEventListener('pointerup',_onFloatingUp);
+  document.removeEventListener('pointercancel',_onFloatingUp);
+  document.removeEventListener('pointerdown',_onFloatingPointerDown,true);
+  document.removeEventListener('keydown',_onFloatingKey);
+}
+
+function dropFloating(){
+  if(!drag||!drag.lifted) return;
+  _detachFloating();
+  drag.el.style.opacity='';
+  const ghost=drag.ghost;
+  if(ghost){
+    const gx=parseFloat(ghost.style.left)+drag.w/2;
+    const gy=parseFloat(ghost.style.top)+drag.h/2;
+    const placed=tryPlaceAt(gx,gy);
+    if(placed){
+      if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
+      drag.el.classList.remove('lifting','armed');
+      liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+      drag=null;refreshLive();
+      toast('✅ تم وضع القطعة بنجاح');
+      return;
+    }
+  }
+  cancelLift();
+}
+
+function cancelLift(){
+  if(!drag) return;
+  _detachFloating();
+  clearTimeout(drag.timer);
+  document.removeEventListener('pointermove',onDrag);
+  document.removeEventListener('pointerup',endDrag);
+  document.removeEventListener('pointercancel',cancelDrag);
+  liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
+  if(drag.el){
+    drag.el.classList.remove('lifting','armed');
+    drag.el.style.opacity='';
+    drag.el.style.pointerEvents='';
+  }
   drag=null;
   refreshLive();
+}
+
+function cancelDrag(){
+  if(!drag) return;
+  clearTimeout(drag.timer);
+  document.removeEventListener('pointermove',onDrag);
+  document.removeEventListener('pointerup',endDrag);
+  document.removeEventListener('pointercancel',cancelDrag);
+  liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
+  if(drag.el){
+    drag.el.classList.remove('lifting','armed');
+    drag.el.style.opacity='';
+    drag.el.style.pointerEvents='';
+  }
+  drag=null;refreshLive();
 }
 
 function refreshLive(){
@@ -1184,22 +1327,20 @@ async function doExportPDF(opts){
   }
   var base=(opts.name||settings.planName||'IQ-Cutting-cut-plan').toString().trim().replace(/[\\/:*?"<>|]+/g,'-')||'IQ-Cutting';
   var fname=base+'.pdf';
-  pdfProgress(true,'جارٍ حفظ الملف…','إعداد ملف PDF…',90);
+  pdfProgress(true,'جارٍ حفظ الملف…','إعداد ملف PDF…',95);
   await new Promise(r=>setTimeout(r,50));
   try{
-    var blob=pdf.output('blob');
     if(window._qpUrl) try{ URL.revokeObjectURL(window._qpUrl); }catch(_){}
+    var blob=pdf.output('blob');
     var url=URL.createObjectURL(blob);
     window._qpUrl=url;
-    pdfProgress(true,'اكتمل الإنشاء!','اضغط على زر التحميل أدناه',100);
-    await new Promise(r=>setTimeout(r,200));
     pdfProgress(false);
-    openPdfModal(url, fname);
-    toast('✓ تم إنشاء ملف PDF — اضغط حفظ للتحميل');
+    try{ pdf.save(fname); }catch(_){}
+    openPdfModal(url,fname);
+    toast('✓ تم إنشاء ملف PDF — اضغط تنزيل أو طباعة');
   }catch(err){
-    pdfProgress(false);
-    try{ pdf.save(fname); toast('✓ تم حفظ ملف PDF'); }
-    catch(e2){ toast('تعذّر إنشاء الملف: '+(e2.message||e2)); }
+    try{ pdf.save(fname); pdfProgress(false); openPdfModal(null,fname); toast('✓ تم حفظ ملف PDF'); }
+    catch(e2){ pdfProgress(false); toast('تعذّر إنشاء الملف: '+(e2.message||e2)); }
   }
   rep.innerHTML='';
   _pdfExporting=false;
@@ -1213,9 +1354,16 @@ function openPdfOptions(){
 }
 function openPdfModal(url, fname){
   const m=$('#pdfModal');
-  $('#pdfFrame').src=url;
-  const dl=$('#pdfDownload'); dl.href=url; dl.setAttribute('download',fname);
-  $('#pdfOpen').href=url;
+  if(url){
+    $('#pdfFrame').src=url;
+    const dl=$('#pdfDownload'); dl.href=url; dl.setAttribute('download',fname);
+    dl.style.display='';
+    $('#pdfOpen').href=url; $('#pdfOpen').style.display='';
+  } else {
+    $('#pdfFrame').src='about:blank';
+    $('#pdfDownload').style.display='none';
+    $('#pdfOpen').style.display='none';
+  }
   m.classList.remove('hidden');
 }
 
