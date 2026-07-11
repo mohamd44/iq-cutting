@@ -101,7 +101,7 @@ input:focus,select:focus{outline:2px solid var(--brand);outline-offset:-1px}
 .sheet-canvas.drop-target{outline:3px dashed var(--brand);outline-offset:3px;box-shadow:0 0 0 4px rgba(181,128,60,.12) inset}
 .piece{position:absolute;box-sizing:border-box;border:1px solid rgba(0,0,0,.35);display:flex;flex-direction:column;align-items:center;justify-content:center;
   font-size:11px;font-weight:700;color:#1f2933;cursor:grab;overflow:visible;text-align:center;user-select:none;background:#dbe7f5;
-  touch-action:pan-y;transition:transform .14s ease, box-shadow .14s ease}
+  touch-action:none;transition:transform .14s ease, box-shadow .14s ease}
 .piece:active{cursor:grabbing}
 .piece.armed{transform:scale(1.03);box-shadow:0 3px 10px rgba(0,0,0,.22);z-index:40}
 .piece.lifting{transform:scale(1.07);box-shadow:0 14px 32px rgba(0,0,0,.38);z-index:90;opacity:.96;cursor:grabbing;border-color:var(--brand-dark)}

@@ -723,7 +723,7 @@ function startDrag(e){
          piece:layout[mi].sheets[si].pieces[pi],
          offX:e.clientX-r.left, offY:e.clientY-r.top, w:r.width, h:r.height,
          startX:e.clientX, startY:e.clientY, lastX:e.clientX, lastY:e.clientY,
-         lifted:false, pointerId:e.pointerId };
+         lifted:false, pointerId:e.pointerId, ghost:null };
   try{ el.setPointerCapture(e.pointerId); }catch(_){}
   el.classList.add('armed');
   drag.timer=setTimeout(lift, HOLD_MS);
@@ -736,25 +736,33 @@ function lift(){
   if(!drag) return;
   drag.lifted=true;
   const el=drag.el;
-  el.classList.remove('armed'); el.classList.add('lifting');
+  el.classList.add('lifting');
   if(navigator.vibrate) try{ navigator.vibrate(25); }catch(_){}
-  drag.parentEl=el.parentNode;
-  drag.parentNext=el.nextSibling;
-  document.body.appendChild(el);
-  el.style.position='fixed'; el.style.margin='0';
-  el.style.width=drag.w+'px'; el.style.height=drag.h+'px';
-  el.style.zIndex='9999';
+  const r=el.getBoundingClientRect();
+  const cs=getComputedStyle(el);
+  const ghost=document.createElement('div');
+  ghost.style.cssText='position:fixed;pointer-events:none;z-index:9999;border:2px solid #b5803c;border-radius:4px;background:'+cs.background+';box-shadow:0 14px 32px rgba(0,0,0,.38);opacity:.92;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#1f2933;text-align:center;overflow:hidden';
+  ghost.style.width=drag.w+'px';
+  ghost.style.height=drag.h+'px';
+  ghost.textContent=el.textContent||'';
+  document.body.appendChild(ghost);
+  drag.ghost=ghost;
   moveFixed(drag.lastX,drag.lastY);
   highlightTarget(drag.lastX,drag.lastY);
 }
 
-function moveFixed(x,y){ drag.el.style.left=(x-drag.offX)+'px'; drag.el.style.top=(y-drag.offY)+'px'; }
+function moveFixed(x,y){
+  if(!drag||!drag.ghost) return;
+  drag.ghost.style.left=(x-drag.offX)+'px';
+  drag.ghost.style.top=(y-drag.offY)+'px';
+}
 
 function highlightTarget(x,y){
   drag.el.style.pointerEvents='none';
+  drag.el.style.visibility='hidden';
   const t=document.elementFromPoint(x,y);
-  drag.el.style.pointerEvents='';
-  const tc=t?(t.closest('.sheet-canvas')||t.closest('.sheet-block')?.querySelector('.sheet-canvas')):null;
+  drag.el.style.pointerEvents=''; drag.el.style.visibility='';
+  const tc=t?(t.closest('.sheet-canvas')||(t.closest('.sheet-block')?t.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
   liveCanvases.forEach(c=>c.classList.toggle('drop-target', c===tc));
 }
 
@@ -773,13 +781,8 @@ function onDrag(e){
 function cancelDrag(){
   if(!drag) return;
   clearTimeout(drag.timer);
-  const el=drag.el;
-  el.classList.remove('armed','lifting');
-  el.style.position=''; el.style.width=''; el.style.height=''; el.style.zIndex='';
-  if(drag.parentEl){
-    if(drag.parentNext) drag.parentEl.insertBefore(el,drag.parentNext);
-    else drag.parentEl.appendChild(el);
-  }
+  drag.el.classList.remove('armed','lifting');
+  if(drag.ghost){ drag.ghost.remove(); drag.ghost=null; }
   document.removeEventListener('pointermove',onDrag);
   document.removeEventListener('pointerup',endDrag);
   document.removeEventListener('pointercancel',cancelDrag);
@@ -852,10 +855,14 @@ function endDrag(e){
   if(!drag.lifted){ drag.el.classList.remove('armed'); drag=null; return; }
 
   const el=drag.el, piece=drag.piece;
+  if(drag.ghost){ drag.ghost.remove(); drag.ghost=null; }
+  el.classList.remove('lifting');
+
   el.style.pointerEvents='none';
+  el.style.visibility='hidden';
   const target=document.elementFromPoint(drag.lastX,drag.lastY);
-  el.style.pointerEvents='';
-  const tCanvas=target?(target.closest('.sheet-canvas')||target.closest('.sheet-block')?.querySelector('.sheet-canvas')):null;
+  el.style.pointerEvents=''; el.style.visibility='';
+  const tCanvas=target?(target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
 
   if(tCanvas){
     const toMi=+tCanvas.dataset.materialIdx;
@@ -891,7 +898,7 @@ function endDrag(e){
     }
   }
   el.classList.remove('lifting');
-  el.style.position=''; el.style.pointerEvents=''; el.style.width=''; el.style.height=''; el.style.zIndex='';
+  el.style.pointerEvents=''; el.style.visibility='';
   drag=null;
   refreshLive();
 }
@@ -1177,42 +1184,23 @@ async function doExportPDF(opts){
   }
   var base=(opts.name||settings.planName||'IQ-Cutting-cut-plan').toString().trim().replace(/[\\/:*?"<>|]+/g,'-')||'IQ-Cutting';
   var fname=base+'.pdf';
-  pdfProgress(true,'جارٍ حفظ الملف…','إعداد ملف PDF للتحميل…',90);
+  pdfProgress(true,'جارٍ حفظ الملف…','إعداد ملف PDF…',90);
   await new Promise(r=>setTimeout(r,50));
   try{
     var blob=pdf.output('blob');
-    pdfProgress(true,'جارٍ حفظ الملف…','اكتمل الإنشاء — جارٍ فتح نافذة الحفظ…',100);
-    await new Promise(r=>setTimeout(r,100));
-    if(window.showSaveFilePicker){
-      try{
-        var handle=await window.showSaveFilePicker({suggestedName:fname,types:[{description:'PDF File',accept:{'application/pdf':['.pdf']}}]});
-        var writable=await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        toast('✓ تم حفظ ملف PDF بنجاح');
-      }catch(pickerErr){
-        if(pickerErr.name!=='AbortError'){
-          var url=URL.createObjectURL(blob);
-          if(window._qpUrl) try{ URL.revokeObjectURL(window._qpUrl); }catch(_){}
-          window._qpUrl=url;
-          var a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); a.remove();
-          openPdfModal(url,fname);
-          toast('✓ تم إنشاء ملف PDF');
-        } else { toast('تم إلغاء الحفظ'); }
-      }
-    } else {
-      var url=URL.createObjectURL(blob);
-      if(window._qpUrl) try{ URL.revokeObjectURL(window._qpUrl); }catch(_){}
-      window._qpUrl=url;
-      var a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); a.remove();
-      openPdfModal(url,fname);
-      toast('✓ تم إنشاء ملف PDF');
-    }
+    if(window._qpUrl) try{ URL.revokeObjectURL(window._qpUrl); }catch(_){}
+    var url=URL.createObjectURL(blob);
+    window._qpUrl=url;
+    pdfProgress(true,'اكتمل الإنشاء!','اضغط على زر التحميل أدناه',100);
+    await new Promise(r=>setTimeout(r,200));
+    pdfProgress(false);
+    openPdfModal(url, fname);
+    toast('✓ تم إنشاء ملف PDF — اضغط حفظ للتحميل');
   }catch(err){
+    pdfProgress(false);
     try{ pdf.save(fname); toast('✓ تم حفظ ملف PDF'); }
     catch(e2){ toast('تعذّر إنشاء الملف: '+(e2.message||e2)); }
   }
-  pdfProgress(false);
   rep.innerHTML='';
   _pdfExporting=false;
   }catch(globalErr){ pdfProgress(false); rep.innerHTML=''; _pdfExporting=false; toast('خطأ: '+(globalErr.message||globalErr)); }
