@@ -738,8 +738,12 @@ function lift(){
   const el=drag.el;
   el.classList.remove('armed'); el.classList.add('lifting');
   if(navigator.vibrate) try{ navigator.vibrate(25); }catch(_){}
+  drag.parentEl=el.parentNode;
+  drag.parentNext=el.nextSibling;
+  document.body.appendChild(el);
   el.style.position='fixed'; el.style.margin='0';
   el.style.width=drag.w+'px'; el.style.height=drag.h+'px';
+  el.style.zIndex='9999';
   moveFixed(drag.lastX,drag.lastY);
   highlightTarget(drag.lastX,drag.lastY);
 }
@@ -750,7 +754,7 @@ function highlightTarget(x,y){
   drag.el.style.pointerEvents='none';
   const t=document.elementFromPoint(x,y);
   drag.el.style.pointerEvents='';
-  const tc=t?t.closest('.sheet-canvas'):null;
+  const tc=t?(t.closest('.sheet-canvas')||t.closest('.sheet-block')?.querySelector('.sheet-canvas')):null;
   liveCanvases.forEach(c=>c.classList.toggle('drop-target', c===tc));
 }
 
@@ -769,7 +773,13 @@ function onDrag(e){
 function cancelDrag(){
   if(!drag) return;
   clearTimeout(drag.timer);
-  drag.el.classList.remove('armed','lifting');
+  const el=drag.el;
+  el.classList.remove('armed','lifting');
+  el.style.position=''; el.style.width=''; el.style.height=''; el.style.zIndex='';
+  if(drag.parentEl){
+    if(drag.parentNext) drag.parentEl.insertBefore(el,drag.parentNext);
+    else drag.parentEl.appendChild(el);
+  }
   document.removeEventListener('pointermove',onDrag);
   document.removeEventListener('pointerup',endDrag);
   document.removeEventListener('pointercancel',cancelDrag);
@@ -845,7 +855,7 @@ function endDrag(e){
   el.style.pointerEvents='none';
   const target=document.elementFromPoint(drag.lastX,drag.lastY);
   el.style.pointerEvents='';
-  const tCanvas=target?target.closest('.sheet-canvas'):null;
+  const tCanvas=target?(target.closest('.sheet-canvas')||target.closest('.sheet-block')?.querySelector('.sheet-canvas')):null;
 
   if(tCanvas){
     const toMi=+tCanvas.dataset.materialIdx;
@@ -880,7 +890,8 @@ function endDrag(e){
       }
     }
   }
-  el.classList.remove('lifting'); el.style.position=''; el.style.pointerEvents='';
+  el.classList.remove('lifting');
+  el.style.position=''; el.style.pointerEvents=''; el.style.width=''; el.style.height=''; el.style.zIndex='';
   drag=null;
   refreshLive();
 }
@@ -983,13 +994,21 @@ function drawSheetToCanvasEl(sheet, idx, s, L, W, materialName){
 
 /* ---------------- تصدير PDF ---------------- */
 let _pdfExporting=false;
+function pdfProgress(show,title,text,pct){
+  const o=$('#pdfProgress'),t=$('#pdfProgressTitle'),tx=$('#pdfProgressText'),b=$('#pdfProgressBar');
+  if(!o) return;
+  if(show){ o.classList.remove('hidden'); if(t) t.textContent=title||'جارٍ إنشاء ملف PDF…'; if(tx) tx.textContent=text||''; if(b) b.style.width=(pct||0)+'%'; }
+  else o.classList.add('hidden');
+}
 async function doExportPDF(opts){
   opts=opts||{summary:true,sheetData:true,cutOrder:true,banding:true,costs:true};
   if(!layout||!layout.length){ toast('قم بالتحسين أولاً'); return; }
   if(_pdfExporting){ toast('جارٍ إنشاء PDF بالفعل…'); return; }
   _pdfExporting=true;
-  toast('جارٍ إنشاء ملف PDF…');
+  pdfProgress(true,'تهيئة المكتبات…','جارٍ تحميل المكتبات المطلوبة…',5);
+  try{
   await ensurePdfLibs();
+  pdfProgress(true,'جارٍ إنشاء ملف PDF…','استخراج الشعار…',10);
   const LOGO=await logoDataUrl();
   const t=totals(); const rep=$('#pdfReport'); rep.innerHTML='';
 
@@ -1127,7 +1146,11 @@ async function doExportPDF(opts){
   var pdf=new jsPDF('p','mm','a4');
   var pw=210, ph=297, margin=10;
   var pagesEls=rep.querySelectorAll('.pdf-page');
-  for(var i=0;i<pagesEls.length;i++){
+  var totalPages=pagesEls.length;
+  for(var i=0;i<totalPages;i++){
+    var pct=Math.round(20 + (i/totalPages)*65);
+    pdfProgress(true,'جارٍ إنشاء ملف PDF…','تحويل الصفحة '+(i+1)+' من '+totalPages+' إلى صورة…',pct);
+    await new Promise(r=>setTimeout(r,10));
     var cv=await html2canvas(pagesEls[i],{scale:2,backgroundColor:'#ffffff',useCORS:true,allowTaint:false,imageTimeout:0});
     var img=cv.toDataURL('image/jpeg',0.92);
     var w=pw-margin*2;
@@ -1154,20 +1177,45 @@ async function doExportPDF(opts){
   }
   var base=(opts.name||settings.planName||'IQ-Cutting-cut-plan').toString().trim().replace(/[\\/:*?"<>|]+/g,'-')||'IQ-Cutting';
   var fname=base+'.pdf';
+  pdfProgress(true,'جارٍ حفظ الملف…','إعداد ملف PDF للتحميل…',90);
+  await new Promise(r=>setTimeout(r,50));
   try{
     var blob=pdf.output('blob');
-    var url=URL.createObjectURL(blob);
-    if(window._qpUrl) { try{ URL.revokeObjectURL(window._qpUrl); }catch(_){ } }
-    window._qpUrl=url;
-    try{ var a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); a.remove(); }catch(_){}
-    openPdfModal(url, fname);
-    toast('✓ تم إنشاء ملف PDF');
+    pdfProgress(true,'جارٍ حفظ الملف…','اكتمل الإنشاء — جارٍ فتح نافذة الحفظ…',100);
+    await new Promise(r=>setTimeout(r,100));
+    if(window.showSaveFilePicker){
+      try{
+        var handle=await window.showSaveFilePicker({suggestedName:fname,types:[{description:'PDF File',accept:{'application/pdf':['.pdf']}}]});
+        var writable=await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        toast('✓ تم حفظ ملف PDF بنجاح');
+      }catch(pickerErr){
+        if(pickerErr.name!=='AbortError'){
+          var url=URL.createObjectURL(blob);
+          if(window._qpUrl) try{ URL.revokeObjectURL(window._qpUrl); }catch(_){}
+          window._qpUrl=url;
+          var a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); a.remove();
+          openPdfModal(url,fname);
+          toast('✓ تم إنشاء ملف PDF');
+        } else { toast('تم إلغاء الحفظ'); }
+      }
+    } else {
+      var url=URL.createObjectURL(blob);
+      if(window._qpUrl) try{ URL.revokeObjectURL(window._qpUrl); }catch(_){}
+      window._qpUrl=url;
+      var a=document.createElement('a'); a.href=url; a.download=fname; document.body.appendChild(a); a.click(); a.remove();
+      openPdfModal(url,fname);
+      toast('✓ تم إنشاء ملف PDF');
+    }
   }catch(err){
     try{ pdf.save(fname); toast('✓ تم حفظ ملف PDF'); }
     catch(e2){ toast('تعذّر إنشاء الملف: '+(e2.message||e2)); }
   }
+  pdfProgress(false);
   rep.innerHTML='';
   _pdfExporting=false;
+  }catch(globalErr){ pdfProgress(false); rep.innerHTML=''; _pdfExporting=false; toast('خطأ: '+(globalErr.message||globalErr)); }
 }
 
 function openPdfOptions(){
