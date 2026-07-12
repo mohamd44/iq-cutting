@@ -714,26 +714,43 @@ const MOVE_TOL=9;
 let drag=null;
 
 /* --- Auto-scroll during drag --- */
-const SCROLL_ZONE=1200;
-const SCROLL_MAX=5000;
-let _scrollRaf=null;
-let _scrollDir=0;
-function _scrollStep(){
-  if(!drag||!drag.lifted){ _scrollRaf=null; return; }
-  if(_scrollDir){
-    window.scrollBy(0,_scrollDir);
-    highlightTarget(drag.lastX,drag.lastY);
+const SCROLL_ZONE = 100;
+const SCROLL_MAX = 100;
+let _scrollRaf = null;
+let _scrollDir = 0;
+let _lastScrollTime = 0;
+
+function _scrollStep(timestamp) {
+  if (!drag || !drag.lifted) { _scrollRaf = null; return; }
+  if (_scrollDir) {
+    const now = performance.now();
+    const dt = _lastScrollTime ? (now - _lastScrollTime) / 16.67 : 1;
+    _lastScrollTime = now;
+    const step = _scrollDir * Math.min(dt, 3);
+    window.scrollBy(0, step);
+    moveFixed(drag.lastX, drag.lastY + step);
+    highlightTarget(drag.lastX, drag.lastY + step);
   }
-  _scrollRaf=requestAnimationFrame(_scrollStep);
+  _scrollRaf = requestAnimationFrame(_scrollStep);
 }
-function _updateAutoScroll(y){
-  const vh=window.innerHeight;
-  if(y<SCROLL_ZONE){ _scrollDir=-SCROLL_MAX*((SCROLL_ZONE-y)/SCROLL_ZONE); }
-  else if(y>vh-SCROLL_ZONE){ _scrollDir=SCROLL_MAX*((y-(vh-SCROLL_ZONE))/SCROLL_ZONE); }
-  else { _scrollDir=0; }
-  if(_scrollDir&&!_scrollRaf) _scrollRaf=requestAnimationFrame(_scrollStep);
+
+function _updateAutoScroll(y) {
+  const vh = window.innerHeight;
+  if (y < SCROLL_ZONE) {
+    _scrollDir = -SCROLL_MAX * ((SCROLL_ZONE - y) / SCROLL_ZONE);
+  } else if (y > vh - SCROLL_ZONE) {
+    _scrollDir = SCROLL_MAX * ((y - (vh - SCROLL_ZONE)) / SCROLL_ZONE);
+  } else {
+    _scrollDir = 0;
+    _lastScrollTime = 0;
+  }
+  if (_scrollDir && !_scrollRaf) { _lastScrollTime = 0; _scrollRaf = requestAnimationFrame(_scrollStep); }
 }
-function _stopAutoScroll(){ _scrollDir=0; if(_scrollRaf){ cancelAnimationFrame(_scrollRaf); _scrollRaf=null; } }
+
+function _stopAutoScroll() {
+  _scrollDir = 0; _lastScrollTime = 0;
+  if (_scrollRaf) { cancelAnimationFrame(_scrollRaf); _scrollRaf = null; }
+}
 
 function startDrag(e){
   if(e.button && e.button!==0) return;
