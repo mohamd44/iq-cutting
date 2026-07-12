@@ -713,6 +713,28 @@ const HOLD_MS=200;
 const MOVE_TOL=9;
 let drag=null;
 
+/* --- Auto-scroll during drag --- */
+const SCROLL_ZONE=80;
+const SCROLL_MAX=14;
+let _scrollRaf=null;
+let _scrollDir=0;
+function _scrollStep(){
+  if(!drag||!drag.lifted){ _scrollRaf=null; return; }
+  if(_scrollDir){
+    window.scrollBy(0,_scrollDir);
+    highlightTarget(drag.lastX,drag.lastY);
+  }
+  _scrollRaf=requestAnimationFrame(_scrollStep);
+}
+function _updateAutoScroll(y){
+  const vh=window.innerHeight;
+  if(y<SCROLL_ZONE){ _scrollDir=-SCROLL_MAX*((SCROLL_ZONE-y)/SCROLL_ZONE); }
+  else if(y>vh-SCROLL_ZONE){ _scrollDir=SCROLL_MAX*((y-(vh-SCROLL_ZONE))/SCROLL_ZONE); }
+  else { _scrollDir=0; }
+  if(_scrollDir&&!_scrollRaf) _scrollRaf=requestAnimationFrame(_scrollStep);
+}
+function _stopAutoScroll(){ _scrollDir=0; if(_scrollRaf){ cancelAnimationFrame(_scrollRaf); _scrollRaf=null; } }
+
 function startDrag(e){
   if(e.button && e.button!==0) return;
   const el=e.currentTarget;
@@ -764,11 +786,13 @@ function onDrag(e){
   e.preventDefault();
   moveFixed(e.clientX,e.clientY);
   highlightTarget(e.clientX,e.clientY);
+  _updateAutoScroll(e.clientY);
 }
 
 function cancelDrag(){
   if(!drag) return;
   clearTimeout(drag.timer);
+  _stopAutoScroll();
   drag.el.classList.remove('armed','lifting');
   drag.el.style.position=''; drag.el.style.pointerEvents=''; drag.el.style.width=''; drag.el.style.height='';
   document.removeEventListener('pointermove',onDrag);
@@ -833,6 +857,7 @@ function magnetSnap(mi,si,piece,nx,ny,exceptIdx){
 function endDrag(e){
   if(!drag) return;
   clearTimeout(drag.timer);
+  _stopAutoScroll();
   document.removeEventListener('pointermove',onDrag);
   document.removeEventListener('pointerup',endDrag);
   document.removeEventListener('pointercancel',cancelDrag);
@@ -840,6 +865,7 @@ function endDrag(e){
 
   if(!drag.lifted){ drag.el.classList.remove('armed'); drag=null; return; }
 
+  drag.lastX=e.clientX; drag.lastY=e.clientY;
   const el=drag.el, piece=drag.piece;
   el.style.pointerEvents='none';
   const target=document.elementFromPoint(drag.lastX,drag.lastY);
