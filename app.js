@@ -743,6 +743,8 @@ function lift(){
   if(navigator.vibrate)try{navigator.vibrate(25);}catch(_){}
   drag.parentEl=el.parentNode;
   document.body.appendChild(el);
+  document.documentElement.style.overflow='hidden';
+  document.documentElement.style.touchAction='none';
   el.style.position='fixed';el.style.margin='0';
   el.style.width=drag.w+'px';el.style.height=drag.h+'px';
   moveFixed(drag.lastX,drag.lastY);
@@ -791,6 +793,8 @@ function onTouchDrag(e){
 function cancelDrag(){
   if(!drag) return;
   clearTimeout(drag.timer);
+  document.documentElement.style.overflow='';
+  document.documentElement.style.touchAction='';
   const el=drag.el;
   el.classList.remove('armed','lifting');
   el.style.cssText='';
@@ -896,6 +900,8 @@ function _dropPiece(){
 function endDrag(e){
   if(!drag) return;
   clearTimeout(drag.timer);
+  document.documentElement.style.overflow='';
+  document.documentElement.style.touchAction='';
   ptrOff(document,'pointermove',onDrag);
   ptrOff(document,'pointerup',endDrag);
   ptrOff(document,'pointercancel',cancelDrag);
