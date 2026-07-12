@@ -701,20 +701,24 @@ const HOLD_MS=200;
 const MOVE_TOL=9;
 let drag=null;
 
-function getPointerXY(e){
-  if(e.touches&&e.touches.length){return{x:e.touches[0].clientX,y:e.touches[0].clientY};}
+/* ===== helpers ===== */
+function pointerXY(e){
+  if(e.touches&&e.touches.length) return{x:e.touches[0].clientX,y:e.touches[0].clientY};
+  if(e.changedTouches&&e.changedTouches.length) return{x:e.changedTouches[0].clientX,y:e.changedTouches[0].clientY};
   return{x:e.clientX,y:e.clientY};
 }
+function ptrOn(el,ev,fn,opts){ el.addEventListener(ev,fn,opts); }
+function ptrOff(el,ev,fn){ el.removeEventListener(ev,fn); }
 
+/* ===== 1. بدء السحب ===== */
 function startDrag(e){
   if(e.button&&e.button!==0) return;
-  if(e.type==='touchstart') e.preventDefault();
   const el=e.currentTarget;
   const canvas=el.closest('.sheet-canvas');
   if(!canvas) return;
   const r=el.getBoundingClientRect();
   const mi=+canvas.dataset.materialIdx, si=+canvas.dataset.sheetIdx, pi=+el.dataset.pi;
-  const pt=getPointerXY(e);
+  const pt=pointerXY(e);
   drag={el,canvas,fromMaterialIdx:mi,fromSheetIdx:si,fromPieceIdx:pi,
     piece:layout[mi].sheets[si].pieces[pi],
     offX:pt.x-r.left,offY:pt.y-r.top,w:r.width,h:r.height,
@@ -722,26 +726,30 @@ function startDrag(e){
     lifted:false};
   el.classList.add('armed');
   drag.timer=setTimeout(lift,HOLD_MS);
-  document.addEventListener('pointermove',onDrag,{passive:false});
-  document.addEventListener('pointerup',endDrag);
-  document.addEventListener('pointercancel',cancelDrag);
-  document.addEventListener('touchmove',onDragTouch,{passive:false});
-  document.addEventListener('touchend',endDragTouch);
-  document.addEventListener('touchcancel',cancelDragTouch);
+  ptrOn(document,'pointermove',onDrag,{passive:false});
+  ptrOn(document,'pointerup',endDrag);
+  ptrOn(document,'pointercancel',cancelDrag);
+  ptrOn(document,'touchmove',onTouchDrag,{passive:false});
+  ptrOn(document,'touchend',onTouchEnd);
+  ptrOn(document,'touchcancel',cancelDrag);
 }
 
+/* ===== 2. رفع القطعة ===== */
 function lift(){
   if(!drag) return;
   drag.lifted=true;
   const el=drag.el;
   el.classList.remove('armed');el.classList.add('lifting');
   if(navigator.vibrate)try{navigator.vibrate(25);}catch(_){}
+  drag.parentEl=el.parentNode;
+  document.body.appendChild(el);
   el.style.position='fixed';el.style.margin='0';
   el.style.width=drag.w+'px';el.style.height=drag.h+'px';
   moveFixed(drag.lastX,drag.lastY);
   highlightTarget(drag.lastX,drag.lastY);
 }
 
+/* ===== 3. تحديث الموقع ===== */
 function moveFixed(x,y){drag.el.style.left=(x-drag.offX)+'px';drag.el.style.top=(y-drag.offY)+'px';}
 
 function highlightTarget(x,y){
@@ -752,6 +760,7 @@ function highlightTarget(x,y){
   liveCanvases.forEach(c=>c.classList.toggle('drop-target',c===tc));
 }
 
+/* ===== 4. أثناء السحب — Pointer Events (Desktop) ===== */
 function onDrag(e){
   if(!drag) return;
   drag.lastX=e.clientX;drag.lastY=e.clientY;
@@ -764,34 +773,38 @@ function onDrag(e){
   highlightTarget(e.clientX,e.clientY);
 }
 
-function onDragTouch(e){
+/* ===== 4b. أثناء السحب — Touch Events (Mobile) ===== */
+function onTouchDrag(e){
   if(!drag) return;
-  e.preventDefault();
-  const pt=getPointerXY(e);
+  const pt=pointerXY(e);
   drag.lastX=pt.x;drag.lastY=pt.y;
   if(!drag.lifted){
     if(Math.hypot(pt.x-drag.startX,pt.y-drag.startY)>MOVE_TOL) cancelDrag();
     return;
   }
+  e.preventDefault();
   moveFixed(pt.x,pt.y);
   highlightTarget(pt.x,pt.y);
 }
 
+/* ===== 5. إلغاء السحب ===== */
 function cancelDrag(){
   if(!drag) return;
   clearTimeout(drag.timer);
-  drag.el.classList.remove('armed','lifting');
-  drag.el.style.position='';drag.el.style.left='';drag.el.style.top='';drag.el.style.pointerEvents='';drag.el.style.width='';drag.el.style.height='';
-  document.removeEventListener('pointermove',onDrag);
-  document.removeEventListener('pointerup',endDrag);
-  document.removeEventListener('pointercancel',cancelDrag);
-  document.removeEventListener('touchmove',onDragTouch);
-  document.removeEventListener('touchend',endDragTouch);
-  document.removeEventListener('touchcancel',cancelDragTouch);
+  const el=drag.el;
+  el.classList.remove('armed','lifting');
+  el.style.cssText='';
+  if(drag.parentEl&&el.parentNode!==drag.parentEl) drag.parentEl.appendChild(el);
+  ptrOff(document,'pointermove',onDrag);
+  ptrOff(document,'pointerup',endDrag);
+  ptrOff(document,'pointercancel',cancelDrag);
+  ptrOff(document,'touchmove',onTouchDrag);
+  ptrOff(document,'touchend',onTouchEnd);
   liveCanvases.forEach(c=>c.classList.remove('drop-target'));
   drag=null;
 }
 
+/* ===== 6. التحقق من التداخل ===== */
 function overlapsAny(mi,si,piece,x,y,exceptIdx){
   const ps=layout[mi].sheets[si].pieces;
   for(let i=0;i<ps.length;i++){
@@ -802,8 +815,9 @@ function overlapsAny(mi,si,piece,x,y,exceptIdx){
   return false;
 }
 
+/* ===== 7. البحث عن مكان خالٍ (بديل) ===== */
 function findFreeSpot(mi,si,piece,wx,wy,exceptIdx){
-  if(!overlapsAny(mi,si,piece,wx,wy,exceptIdx)) return {x:wx,y:wy};
+  if(!overlapsAny(mi,si,piece,wx,wy,exceptIdx)) return{x:wx,y:wy};
   const L=layout[mi].L,W=layout[mi].W;
   const step=2,maxX=L-piece.l,maxY=W-piece.w;
   let best=null,bestD=Infinity;
@@ -818,6 +832,7 @@ function findFreeSpot(mi,si,piece,wx,wy,exceptIdx){
   return best;
 }
 
+/* ===== 8. الالتصاق المغناطيسي ===== */
 function magnetSnap(mi,si,piece,nx,ny,exceptIdx){
   const ps=layout[mi].sheets[si].pieces,kerf=settings.kerf||0;
   const L=layout[mi].L,W=layout[mi].W;
@@ -845,6 +860,7 @@ function magnetSnap(mi,si,piece,nx,ny,exceptIdx){
   return best;
 }
 
+/* ===== 9. تنفيذ الإفلات ===== */
 function _dropPiece(){
   const el=drag.el,piece=drag.piece;
   el.style.pointerEvents='none';
@@ -852,68 +868,55 @@ function _dropPiece(){
   el.style.pointerEvents='';
   const tCanvas=target?(target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
 
-  if(tCanvas){
-    const toMi=+tCanvas.dataset.materialIdx,toSi=+tCanvas.dataset.sheetIdx;
-    if(toMi!==drag.fromMaterialIdx){
-      toast('⚠️ لا يمكن نقل القطعة إلى خامة مختلفة');
-    } else {
-      const matL=layout[toMi].L,matW=layout[toMi].W;
-      if(piece.l>matL+0.01||piece.w>matW+0.01){
-        toast('⚠️ القطعة أكبر من اللوح — رُفض الإفلات');
-      } else {
-        const cr=tCanvas.getBoundingClientRect();
-        const scale=tCanvas.clientWidth/matL;
-        let nx=(drag.lastX-cr.left-drag.offX)/scale;
-        let ny=(drag.lastY-cr.top-drag.offY)/scale;
-        nx=Math.max(0,Math.min(nx,matL-piece.l));
-        ny=Math.max(0,Math.min(ny,matW-piece.w));
-        const except=(toMi===drag.fromMaterialIdx&&toSi===drag.fromSheetIdx)?drag.fromPieceIdx:-1;
-        let pos=magnetSnap(toMi,toSi,piece,nx,ny,except);
-        if(!pos) pos=findFreeSpot(toMi,toSi,piece,nx,ny,except);
-        if(!pos){
-          toast('⚠️ لا يوجد مكان كافٍ في هذا اللوح');
-        } else {
-          piece.x=Math.round(pos.x*10)/10;piece.y=Math.round(pos.y*10)/10;
-          if(toSi!==drag.fromSheetIdx){
-            layout[drag.fromMaterialIdx].sheets[drag.fromSheetIdx].pieces.splice(drag.fromPieceIdx,1);
-            layout[toMi].sheets[toSi].pieces.push(piece);
-            layout[drag.fromMaterialIdx].sheets=layout[drag.fromMaterialIdx].sheets.filter(s=>s.pieces.length>0);
-            layout=layout.filter(mg=>mg.sheets.length>0);
-          }
-        }
-      }
-    }
+  if(!tCanvas) return;
+  const toMi=+tCanvas.dataset.materialIdx,toSi=+tCanvas.dataset.sheetIdx;
+  if(toMi!==drag.fromMaterialIdx){ toast('\u26a0\ufe0f \u0644\u0627 \u064a\u0645\u0643\u0646 \u0646\u0642\u0644 \u0627\u0644\u0642\u0637\u0639\u0629 \u0625\u0644\u0649 \u062e\u0627\u0645\u0629 \u0645\u062e\u062a\u0644\u0641\u0629'); return; }
+  const matL=layout[toMi].L,matW=layout[toMi].W;
+  if(piece.l>matL+0.01||piece.w>matW+0.01){ toast('\u26a0\ufe0f \u0627\u0644\u0642\u0637\u0639\u0629 \u0623\u0643\u0628\u0631 \u0645\u0646 \u0627\u0644\u0644\u0648\u062d \u2014 \u0631\u064f\u0628\u0636 \u0627\u0644\u0625\u0641\u0644\u0627\u062a'); return; }
+  const cr=tCanvas.getBoundingClientRect();
+  const scale=tCanvas.clientWidth/matL;
+  let nx=(drag.lastX-cr.left-drag.offX)/scale;
+  let ny=(drag.lastY-cr.top-drag.offY)/scale;
+  nx=Math.max(0,Math.min(nx,matL-piece.l));
+  ny=Math.max(0,Math.min(ny,matW-piece.w));
+  const except=(toMi===drag.fromMaterialIdx&&toSi===drag.fromSheetIdx)?drag.fromPieceIdx:-1;
+  let pos=magnetSnap(toMi,toSi,piece,nx,ny,except);
+  if(!pos) pos=findFreeSpot(toMi,toSi,piece,nx,ny,except);
+  if(!pos){ toast('\u26a0\ufe0f \u0644\u0627 \u064a\u0648\u062c\u062f \u0645\u0643\u0627\u0646 \u0643\u0627\u0641\u064d \u0641\u064a \u0647\u0630\u0627 \u0627\u0644\u0644\u0648\u062d'); return; }
+  piece.x=Math.round(pos.x*10)/10;piece.y=Math.round(pos.y*10)/10;
+  if(toSi!==drag.fromSheetIdx){
+    layout[drag.fromMaterialIdx].sheets[drag.fromSheetIdx].pieces.splice(drag.fromPieceIdx,1);
+    layout[toMi].sheets[toSi].pieces.push(piece);
+    layout[drag.fromMaterialIdx].sheets=layout[drag.fromMaterialIdx].sheets.filter(s=>s.pieces.length>0);
+    layout=layout.filter(mg=>mg.sheets.length>0);
   }
 }
 
+/* ===== 10. إنهاء السحب — Pointer ===== */
 function endDrag(e){
   if(!drag) return;
   clearTimeout(drag.timer);
-  document.removeEventListener('pointermove',onDrag);
-  document.removeEventListener('pointerup',endDrag);
-  document.removeEventListener('pointercancel',cancelDrag);
-  document.removeEventListener('touchmove',onDragTouch);
-  document.removeEventListener('touchend',endDragTouch);
-  document.removeEventListener('touchcancel',cancelDragTouch);
+  ptrOff(document,'pointermove',onDrag);
+  ptrOff(document,'pointerup',endDrag);
+  ptrOff(document,'pointercancel',cancelDrag);
+  ptrOff(document,'touchmove',onTouchDrag);
+  ptrOff(document,'touchend',onTouchEnd);
   liveCanvases.forEach(c=>c.classList.remove('drop-target'));
-
   if(!drag.lifted){drag.el.classList.remove('armed');drag=null;return;}
-
   _dropPiece();
-  drag.el.classList.remove('lifting');drag.el.style.position='';drag.el.style.left='';drag.el.style.top='';drag.el.style.pointerEvents='';drag.el.style.width='';drag.el.style.height='';
+  drag.el.classList.remove('lifting');drag.el.style.cssText='';
+  if(drag.parentEl&&drag.el.parentNode!==drag.parentEl) drag.parentEl.appendChild(drag.el);
   drag=null;
   refreshLive();
 }
 
-function endDragTouch(e){
+/* ===== 11. إنهاء السحب — Touch (Mobile) ===== */
+function onTouchEnd(e){
   if(!drag) return;
   if(e.touches&&e.touches.length) return;
-  const ct=e.changedTouches?e.changedTouches[0]:null;
-  if(ct){drag.lastX=ct.clientX;drag.lastY=ct.clientY;}
+  const pt=pointerXY(e);drag.lastX=pt.x;drag.lastY=pt.y;
   endDrag(e);
 }
-
-function cancelDragTouch(){ cancelDrag(); }
 
 function refreshLive(){
   const scrollY=window.scrollY;
