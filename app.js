@@ -889,12 +889,6 @@ function refreshLive(){
   window.scrollTo(0,scrollY);
 }
 
-function refreshLive(){
-  const scrollY=window.scrollY;
-  renderResults();
-  window.scrollTo(0,scrollY);
-}
-
 /* ---------------- رسم المخطط على Canvas (للـ PDF) ---------------- */
 function _haloText(ctx,text,x,y,color,halo){
   ctx.save(); ctx.lineJoin='round';
