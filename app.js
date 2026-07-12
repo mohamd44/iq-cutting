@@ -709,11 +709,10 @@ function renderResults(){
 window.addEventListener('resize',()=>{ if(layout) liveCanvases.forEach(c=>{ if(c.isConnected) positionPieces(c,c.clientWidth/c._L); }); });
 
 /* ---------------- السحب والإفلات الاحترافي ---------------- */
-const HOLD_MS=200;
-const MOVE_TOL=9;
+const HOLD_MS=180;
+const MOVE_TOL=8;
 let drag=null;
-let _floatingListenersAttached=false;
-let _floatingFollowing=false;
+let _floatingAttached=false;
 
 function startDrag(e){
   if(e.button && e.button!==0) return;
@@ -721,22 +720,18 @@ function startDrag(e){
   const canvas=el.parentElement;
   const r=el.getBoundingClientRect();
   const mi=+canvas.dataset.materialIdx, si=+canvas.dataset.sheetIdx, pi=+el.dataset.pi;
-
-  if(drag && drag.lifted){
-    if(drag.fromMaterialIdx===mi && drag.fromSheetIdx===si && drag.fromPieceIdx===pi){
-      dropFloating(); return;
-    }
+  if(drag&&drag.lifted){
+    if(drag.fromMaterialIdx===mi&&drag.fromSheetIdx===si&&drag.fromPieceIdx===pi){ cancelLift(); return; }
     cancelLift();
   }
-
-  drag={ el, canvas, fromMaterialIdx:mi, fromSheetIdx:si, fromPieceIdx:pi,
-         piece:layout[mi].sheets[si].pieces[pi],
-         offX:e.clientX-r.left, offY:e.clientY-r.top, w:r.width, h:r.height,
-         startX:e.clientX, startY:e.clientY, lastX:e.clientX, lastY:e.clientY,
-         lifted:false, pointerId:e.pointerId, ghost:null };
-  try{ el.setPointerCapture(e.pointerId); }catch(_){}
+  drag={el,canvas,fromMaterialIdx:mi,fromSheetIdx:si,fromPieceIdx:pi,
+    piece:layout[mi].sheets[si].pieces[pi],
+    offX:e.clientX-r.left,offY:e.clientY-r.top,w:r.width,h:r.height,
+    startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastY:e.clientY,
+    lifted:false,pointerId:e.pointerId,ghost:null};
+  try{el.setPointerCapture(e.pointerId);}catch(_){}
   el.classList.add('armed');
-  drag.timer=setTimeout(lift, HOLD_MS);
+  drag.timer=setTimeout(lift,HOLD_MS);
   document.addEventListener('pointermove',onDrag);
   document.addEventListener('pointerup',endDrag);
   document.addEventListener('pointercancel',cancelDrag);
@@ -745,19 +740,17 @@ function startDrag(e){
 function lift(){
   if(!drag) return;
   drag.lifted=true;
-  const el=drag.el;
-  el.classList.add('lifting');
-  if(navigator.vibrate) try{ navigator.vibrate(25); }catch(_){}
+  const el=drag.el; el.classList.add('lifting');
+  if(navigator.vibrate) try{navigator.vibrate(20);}catch(_){}
   const cs=getComputedStyle(el);
   const ghost=document.createElement('div');
-  ghost.style.cssText='position:fixed;pointer-events:none;z-index:9999;border:2px solid #b5803c;border-radius:4px;background:'+cs.background+';box-shadow:0 14px 32px rgba(0,0,0,.38);opacity:.92;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#1f2933;text-align:center;overflow:hidden';
-  ghost.style.width=drag.w+'px';
-  ghost.style.height=drag.h+'px';
+  ghost.style.cssText='position:fixed;pointer-events:none;z-index:9999;border:2px solid #b5803c;border-radius:4px;background:'+cs.background+';box-shadow:0 14px 32px rgba(0,0,0,.38);opacity:.88;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#1f2933;text-align:center;overflow:hidden';
+  ghost.style.width=drag.w+'px'; ghost.style.height=drag.h+'px';
   ghost.textContent=el.textContent||'';
   document.body.appendChild(ghost);
   drag.ghost=ghost;
   moveFixed(drag.lastX,drag.lastY);
-  highlightTarget(drag.lastX,drag.lastY);
+  toast('💡 حرّك الشاشة ثم اضغط على اللوح المراد لوضع القطعة');
 }
 
 function moveFixed(x,y){
@@ -766,26 +759,106 @@ function moveFixed(x,y){
   drag.ghost.style.top=(y-drag.offY)+'px';
 }
 
-function highlightTarget(x,y){
-  if(!drag) return;
-  drag.el.style.pointerEvents='none';
-  drag.el.style.visibility='hidden';
-  const t=document.elementFromPoint(x,y);
-  drag.el.style.pointerEvents=''; drag.el.style.visibility='';
-  const tc=t?(t.closest('.sheet-canvas')||(t.closest('.sheet-block')?t.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
-  liveCanvases.forEach(c=>c.classList.toggle('drop-target', c===tc));
-}
-
 function onDrag(e){
   if(!drag) return;
   drag.lastX=e.clientX; drag.lastY=e.clientY;
   if(!drag.lifted){
-    if(Math.hypot(e.clientX-drag.startX, e.clientY-drag.startY)>MOVE_TOL) cancelDrag();
+    if(Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>MOVE_TOL) cancelDrag();
     return;
   }
   e.preventDefault();
   moveFixed(e.clientX,e.clientY);
-  highlightTarget(e.clientX,e.clientY);
+}
+
+function endDrag(e){
+  if(!drag) return;
+  clearTimeout(drag.timer);
+  document.removeEventListener('pointermove',onDrag);
+  document.removeEventListener('pointerup',endDrag);
+  document.removeEventListener('pointercancel',cancelDrag);
+  if(!drag.lifted){drag.el.classList.remove('armed');drag=null;return;}
+  enterFloating();
+}
+
+function enterFloating(){
+  if(!drag||!drag.lifted||!drag.ghost) return;
+  drag.el.style.opacity='0.25';
+  drag.el.style.pointerEvents='none';
+  if(!_floatingAttached){
+    _floatingAttached=true;
+    document.addEventListener('pointerdown',_onFloatTap,true);
+    document.addEventListener('keydown',_onFloatKey);
+  }
+}
+
+function _onFloatTap(e){
+  if(!drag||!drag.lifted) return;
+  const target=e.target;
+  const tCanvas=target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null);
+  if(!tCanvas) return;
+  e.preventDefault(); e.stopPropagation();
+  const toMi=+tCanvas.dataset.materialIdx, toSi=+tCanvas.dataset.sheetIdx;
+  if(toMi!==drag.fromMaterialIdx){toast('⚠️ لا يمكن نقل القطعة إلى خامة مختلفة');cancelLift();return;}
+  const matL=layout[toMi].L, matW=layout[toMi].W;
+  if(drag.piece.l>matL+0.01||drag.piece.w>matW+0.01){toast('⚠️ القطعة أكبر من اللوح — رُفض');cancelLift();return;}
+  const cr=tCanvas.getBoundingClientRect();
+  const scale=tCanvas.clientWidth/matL;
+  const tapX=e.clientX, tapY=e.clientY;
+  let nx=(tapX-cr.left)/scale - drag.piece.l/2;
+  let ny=(tapY-cr.top)/scale - drag.piece.w/2;
+  nx=Math.max(0,Math.min(nx,matL-drag.piece.l));
+  ny=Math.max(0,Math.min(ny,matW-drag.piece.w));
+  const except=(toMi===drag.fromMaterialIdx&&toSi===drag.fromSheetIdx)?drag.fromPieceIdx:-1;
+  let pos=magnetSnap(toMi,toSi,drag.piece,nx,ny,except);
+  if(!pos) pos=findFreeSpot(toMi,toSi,drag.piece,nx,ny,except);
+  if(!pos){toast('⚠️ لا يوجد مكان كافٍ في هذا اللوح');return;}
+  drag.piece.x=Math.round(pos.x*10)/10; drag.piece.y=Math.round(pos.y*10)/10;
+  if(toSi!==drag.fromSheetIdx){
+    layout[drag.fromMaterialIdx].sheets[drag.fromSheetIdx].pieces.splice(drag.fromPieceIdx,1);
+    layout[toMi].sheets[toSi].pieces.push(drag.piece);
+    layout[drag.fromMaterialIdx].sheets=layout[drag.fromMaterialIdx].sheets.filter(s=>s.pieces.length>0);
+    layout=layout.filter(mg=>mg.sheets.length>0);
+  }
+  _detachFloat();
+  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
+  drag.el.classList.remove('lifting','armed');
+  drag=null;
+  refreshLive();
+  toast('✅ تم وضع القطعة');
+}
+
+function _onFloatKey(e){
+  if(e.key==='Escape') cancelLift();
+}
+
+function _detachFloat(){
+  _floatingAttached=false;
+  document.removeEventListener('pointerdown',_onFloatTap,true);
+  document.removeEventListener('keydown',_onFloatKey);
+}
+
+function cancelLift(){
+  if(!drag) return;
+  _detachFloat();
+  clearTimeout(drag.timer);
+  document.removeEventListener('pointermove',onDrag);
+  document.removeEventListener('pointerup',endDrag);
+  document.removeEventListener('pointercancel',cancelDrag);
+  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
+  if(drag.el){drag.el.classList.remove('lifting','armed');drag.el.style.opacity='';drag.el.style.pointerEvents='';}
+  drag=null;
+  refreshLive();
+}
+
+function cancelDrag(){
+  if(!drag) return;
+  clearTimeout(drag.timer);
+  document.removeEventListener('pointermove',onDrag);
+  document.removeEventListener('pointerup',endDrag);
+  document.removeEventListener('pointercancel',cancelDrag);
+  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
+  if(drag.el){drag.el.classList.remove('lifting','armed');drag.el.style.opacity='';drag.el.style.pointerEvents='';}
+  drag=null;refreshLive();
 }
 
 function overlapsAny(mi,si,piece,x,y,exceptIdx){
@@ -822,12 +895,10 @@ function magnetSnap(mi,si,piece,nx,ny,exceptIdx){
   ps.forEach((o,i)=>{if(i===exceptIdx) return;
     const right=o.x+o.l+kerf,left=o.x-piece.l-kerf;
     const below=o.y+o.w+kerf,above=o.y-piece.w-kerf;
-    const yTop=o.y,yBot=o.y+o.w-piece.w;
-    const xLeft=o.x,xRight=o.x+o.l-piece.l;
-    add(right,yTop);add(right,yBot);
-    add(left,yTop);add(left,yBot);
-    add(xLeft,below);add(xRight,below);
-    add(xLeft,above);add(xRight,above);
+    add(right,o.y);add(right,o.y+o.w-piece.w);
+    add(left,o.y);add(left,o.y+o.w-piece.w);
+    add(o.x,below);add(o.x+o.l-piece.l,below);
+    add(o.x,above);add(o.x+o.l-piece.l,above);
   });
   let best=null,bd=Infinity;
   for(const c of cand){
@@ -837,213 +908,6 @@ function magnetSnap(mi,si,piece,nx,ny,exceptIdx){
     if(d<bd){bd=d;best=c;}
   }
   return best;
-}
-
-function tryPlaceAt(x,y){
-  if(!drag||!drag.lifted||!drag.ghost) return false;
-  drag.el.style.pointerEvents='none';drag.el.style.visibility='hidden';
-  const target=document.elementFromPoint(x,y);
-  drag.el.style.pointerEvents='';drag.el.style.visibility='';
-  const tCanvas=target?(target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
-  if(!tCanvas) return false;
-  const toMi=+tCanvas.dataset.materialIdx,toSi=+tCanvas.dataset.sheetIdx;
-  if(toMi!==drag.fromMaterialIdx){toast('⚠️ لا يمكن نقل القطعة إلى خامة مختلفة');return true;}
-  const matL=layout[toMi].L,matW=layout[toMi].W;
-  if(drag.piece.l>matL+0.01||drag.piece.w>matW+0.01){toast('⚠️ القطعة أكبر من اللوح — رُفض');return true;}
-  const cr=tCanvas.getBoundingClientRect();
-  const scale=tCanvas.clientWidth/matL;
-  let nx=(x-cr.left)/scale;
-  let ny=(y-cr.top)/scale;
-  nx=Math.max(0,Math.min(nx,matL-drag.piece.l));
-  ny=Math.max(0,Math.min(ny,matW-drag.piece.w));
-  const except=(toMi===drag.fromMaterialIdx&&toSi===drag.fromSheetIdx)?drag.fromPieceIdx:-1;
-  let pos=magnetSnap(toMi,toSi,drag.piece,nx,ny,except);
-  if(!pos) pos=findFreeSpot(toMi,toSi,drag.piece,nx,ny,except);
-  if(!pos){toast('⚠️ لا يوجد مكان كافٍ في هذا اللوح');return true;}
-  drag.piece.x=Math.round(pos.x*10)/10;drag.piece.y=Math.round(pos.y*10)/10;
-  if(toSi!==drag.fromSheetIdx){
-    layout[drag.fromMaterialIdx].sheets[drag.fromSheetIdx].pieces.splice(drag.fromPieceIdx,1);
-    layout[toMi].sheets[toSi].pieces.push(drag.piece);
-    layout[drag.fromMaterialIdx].sheets=layout[drag.fromMaterialIdx].sheets.filter(s=>s.pieces.length>0);
-    layout=layout.filter(mg=>mg.sheets.length>0);
-  }
-  return true;
-}
-
-function endDrag(e){
-  if(!drag) return;
-  clearTimeout(drag.timer);
-  document.removeEventListener('pointermove',onDrag);
-  document.removeEventListener('pointerup',endDrag);
-  document.removeEventListener('pointercancel',cancelDrag);
-
-  if(!drag.lifted){drag.el.classList.remove('armed');drag=null;return;}
-
-  const placed=tryPlaceAt(drag.lastX,drag.lastY);
-  if(placed){
-    if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
-    drag.el.classList.remove('lifting','armed');
-    liveCanvases.forEach(c=>c.classList.remove('drop-target'));
-    drag=null;refreshLive();return;
-  }
-
-  liveCanvases.forEach(c=>c.classList.remove('drop-target'));
-  if(navigator.vibrate) try{navigator.vibrate(15);}catch(_){}
-  enterFloating();
-}
-
-function enterFloating(){
-  if(!drag||!drag.lifted||!drag.ghost) return;
-  drag.el.style.opacity='0.3';
-  drag.el.style.pointerEvents='none';
-  _floatingFollowing=false;
-  if(!_floatingListenersAttached){
-    _floatingListenersAttached=true;
-    document.addEventListener('pointermove',_onFloatingMove);
-    document.addEventListener('pointerup',_onFloatingUp);
-    document.addEventListener('pointercancel',_onFloatingUp);
-    document.addEventListener('pointerdown',_onFloatingPointerDown,true);
-    document.addEventListener('keydown',_onFloatingKey);
-  }
-}
-
-function _onFloatingMove(e){
-  if(!drag||!drag.lifted||!drag.ghost) return;
-  drag.lastX=e.clientX;drag.lastY=e.clientY;
-  moveFixed(e.clientX,e.clientY);
-  highlightTarget(e.clientX,e.clientY);
-}
-
-function _onFloatingUp(e){
-  if(!drag||!drag.lifted||!_floatingFollowing) return;
-  _floatingFollowing=false;
-  const placed=tryPlaceAt(drag.lastX,drag.lastY);
-  if(placed){
-    _detachFloating();
-    if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
-    drag.el.classList.remove('lifting','armed');
-    liveCanvases.forEach(c=>c.classList.remove('drop-target'));
-    drag=null;refreshLive();
-    toast('✅ تم وضع القطعة بنجاح');
-  } else {
-    liveCanvases.forEach(c=>c.classList.remove('drop-target'));
-  }
-}
-
-function _onFloatingPointerDown(e){
-  if(!drag||!drag.lifted) return;
-
-  if(_floatingFollowing){
-    return;
-  }
-
-  const ghost=drag.ghost;
-  if(ghost){
-    const gx=parseFloat(ghost.style.left)+drag.w/2;
-    const gy=parseFloat(ghost.style.top)+drag.h/2;
-    drag.offX=drag.w/2;drag.offY=drag.h/2;
-    drag.lastX=gx;drag.lastY=gy;
-    drag.startX=e.clientX;drag.startY=e.clientY;
-  }
-  drag.el.style.pointerEvents='none';drag.el.style.visibility='hidden';
-  const target=document.elementFromPoint(e.clientX,e.clientY);
-  drag.el.style.pointerEvents='';drag.el.style.visibility='';
-
-  const clickedPiece=target?target.closest('.piece'):null;
-  if(clickedPiece && clickedPiece.dataset.pi!=null){
-    const ci=+clickedPiece.dataset.pi;
-    const si=+clickedPiece.dataset.sheetIdx;
-    const mi=+clickedPiece.dataset.materialIdx;
-    if(mi===drag.fromMaterialIdx && si===drag.fromSheetIdx && ci===drag.fromPieceIdx){
-      cancelLift();return;
-    }
-    cancelLift();return;
-  }
-
-  const onCanvas=target?(target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
-  if(onCanvas){
-    _floatingFollowing=true;
-    moveFixed(e.clientX,e.clientY);
-    highlightTarget(e.clientX,e.clientY);
-  } else {
-    const placed=tryPlaceAt(e.clientX,e.clientY);
-    if(placed){
-      _detachFloating();
-      if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
-      drag.el.classList.remove('lifting','armed');
-      drag=null;refreshLive();
-      toast('✅ تم وضع القطعة بنجاح');
-    }
-  }
-}
-
-function _onFloatingKey(e){
-  if(e.key==='Escape') cancelLift();
-}
-
-function _detachFloating(){
-  _floatingListenersAttached=false;
-  _floatingFollowing=false;
-  document.removeEventListener('pointermove',_onFloatingMove);
-  document.removeEventListener('pointerup',_onFloatingUp);
-  document.removeEventListener('pointercancel',_onFloatingUp);
-  document.removeEventListener('pointerdown',_onFloatingPointerDown,true);
-  document.removeEventListener('keydown',_onFloatingKey);
-}
-
-function dropFloating(){
-  if(!drag||!drag.lifted) return;
-  _detachFloating();
-  drag.el.style.opacity='';
-  const ghost=drag.ghost;
-  if(ghost){
-    const gx=parseFloat(ghost.style.left)+drag.w/2;
-    const gy=parseFloat(ghost.style.top)+drag.h/2;
-    const placed=tryPlaceAt(gx,gy);
-    if(placed){
-      if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
-      drag.el.classList.remove('lifting','armed');
-      liveCanvases.forEach(c=>c.classList.remove('drop-target'));
-      drag=null;refreshLive();
-      toast('✅ تم وضع القطعة بنجاح');
-      return;
-    }
-  }
-  cancelLift();
-}
-
-function cancelLift(){
-  if(!drag) return;
-  _detachFloating();
-  clearTimeout(drag.timer);
-  document.removeEventListener('pointermove',onDrag);
-  document.removeEventListener('pointerup',endDrag);
-  document.removeEventListener('pointercancel',cancelDrag);
-  liveCanvases.forEach(c=>c.classList.remove('drop-target'));
-  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
-  if(drag.el){
-    drag.el.classList.remove('lifting','armed');
-    drag.el.style.opacity='';
-    drag.el.style.pointerEvents='';
-  }
-  drag=null;
-  refreshLive();
-}
-
-function cancelDrag(){
-  if(!drag) return;
-  clearTimeout(drag.timer);
-  document.removeEventListener('pointermove',onDrag);
-  document.removeEventListener('pointerup',endDrag);
-  document.removeEventListener('pointercancel',cancelDrag);
-  liveCanvases.forEach(c=>c.classList.remove('drop-target'));
-  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
-  if(drag.el){
-    drag.el.classList.remove('lifting','armed');
-    drag.el.style.opacity='';
-    drag.el.style.pointerEvents='';
-  }
-  drag=null;refreshLive();
 }
 
 function refreshLive(){
@@ -1327,21 +1191,11 @@ async function doExportPDF(opts){
   }
   var base=(opts.name||settings.planName||'IQ-Cutting-cut-plan').toString().trim().replace(/[\\/:*?"<>|]+/g,'-')||'IQ-Cutting';
   var fname=base+'.pdf';
-  pdfProgress(true,'جارٍ حفظ الملف…','إعداد ملف PDF…',95);
-  await new Promise(r=>setTimeout(r,50));
-  try{
-    if(window._qpUrl) try{ URL.revokeObjectURL(window._qpUrl); }catch(_){}
-    var blob=pdf.output('blob');
-    var url=URL.createObjectURL(blob);
-    window._qpUrl=url;
-    pdfProgress(false);
-    try{ pdf.save(fname); }catch(_){}
-    openPdfModal(url,fname);
-    toast('✓ تم إنشاء ملف PDF — اضغط تنزيل أو طباعة');
-  }catch(err){
-    try{ pdf.save(fname); pdfProgress(false); openPdfModal(null,fname); toast('✓ تم حفظ ملف PDF'); }
-    catch(e2){ pdfProgress(false); toast('تعذّر إنشاء الملف: '+(e2.message||e2)); }
-  }
+  pdfProgress(true,'جارٍ حفظ الملف…','اكتمل الإنشاء — جارٍ فتح نافذة الحفظ…',95);
+  await new Promise(r=>setTimeout(r,100));
+  pdf.save(fname);
+  pdfProgress(false);
+  toast('✓ تم حفظ ملف PDF بنجاح');
   rep.innerHTML='';
   _pdfExporting=false;
   }catch(globalErr){ pdfProgress(false); rep.innerHTML=''; _pdfExporting=false; toast('خطأ: '+(globalErr.message||globalErr)); }
