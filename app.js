@@ -637,7 +637,7 @@ function positionPieces(canvas, scale){
                   ${small?'':`<span class="pname">${escapeHtml(p.name)}${dupLabel}${p.rot?' \u21bb':''}</span>`}`;
     const de=displayEdges(p);
     ['t','b','l','r'].forEach(s=>{ if(de[s]){ const bd=document.createElement('span'); bd.className='band '+s; el.appendChild(bd);} });
-    if(canvas._interactive){ el.addEventListener('pointerdown',startDrag); }
+    if(canvas._interactive){ el.addEventListener('pointerdown',startDrag); el.addEventListener('touchstart',startDrag,{passive:false}); }
     canvas.appendChild(el);
   });
   markOverlaps(canvas);
@@ -696,35 +696,44 @@ function renderResults(){
 
 window.addEventListener('resize',()=>{ if(layout) liveCanvases.forEach(c=>{ if(c.isConnected) positionPieces(c,c.clientWidth/c._L); }); });
 
-/* ---------------- السحب والإفلات (press-and-hold) ---------------- */
+/* ---------------- السحب والإفلات (press-and-hold) — Desktop + Mobile ---------------- */
 const HOLD_MS=200;
 const MOVE_TOL=9;
 let drag=null;
 
+function getPointerXY(e){
+  if(e.touches&&e.touches.length){return{x:e.touches[0].clientX,y:e.touches[0].clientY};}
+  return{x:e.clientX,y:e.clientY};
+}
+
 function startDrag(e){
   if(e.button&&e.button!==0) return;
+  if(e.type==='touchstart') e.preventDefault();
   const el=e.currentTarget;
   const canvas=el.closest('.sheet-canvas');
   if(!canvas) return;
   const r=el.getBoundingClientRect();
   const mi=+canvas.dataset.materialIdx, si=+canvas.dataset.sheetIdx, pi=+el.dataset.pi;
+  const pt=getPointerXY(e);
   drag={el,canvas,fromMaterialIdx:mi,fromSheetIdx:si,fromPieceIdx:pi,
     piece:layout[mi].sheets[si].pieces[pi],
-    offX:e.clientX-r.left,offY:e.clientY-r.top,w:r.width,h:r.height,
-    startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastY:e.clientY,
-    lifted:false,pointerId:e.pointerId};
+    offX:pt.x-r.left,offY:pt.y-r.top,w:r.width,h:r.height,
+    startX:pt.x,startY:pt.y,lastX:pt.x,lastY:pt.y,
+    lifted:false};
   el.classList.add('armed');
   drag.timer=setTimeout(lift,HOLD_MS);
   document.addEventListener('pointermove',onDrag,{passive:false});
   document.addEventListener('pointerup',endDrag);
   document.addEventListener('pointercancel',cancelDrag);
+  document.addEventListener('touchmove',onDragTouch,{passive:false});
+  document.addEventListener('touchend',endDragTouch);
+  document.addEventListener('touchcancel',cancelDragTouch);
 }
 
 function lift(){
   if(!drag) return;
   drag.lifted=true;
   const el=drag.el;
-  try{el.releasePointerCapture(drag.pointerId);}catch(_){}
   el.classList.remove('armed');el.classList.add('lifting');
   if(navigator.vibrate)try{navigator.vibrate(25);}catch(_){}
   el.style.position='fixed';el.style.margin='0';
@@ -755,15 +764,30 @@ function onDrag(e){
   highlightTarget(e.clientX,e.clientY);
 }
 
+function onDragTouch(e){
+  if(!drag) return;
+  e.preventDefault();
+  const pt=getPointerXY(e);
+  drag.lastX=pt.x;drag.lastY=pt.y;
+  if(!drag.lifted){
+    if(Math.hypot(pt.x-drag.startX,pt.y-drag.startY)>MOVE_TOL) cancelDrag();
+    return;
+  }
+  moveFixed(pt.x,pt.y);
+  highlightTarget(pt.x,pt.y);
+}
+
 function cancelDrag(){
   if(!drag) return;
   clearTimeout(drag.timer);
-  try{drag.el.releasePointerCapture(drag.pointerId);}catch(_){}
   drag.el.classList.remove('armed','lifting');
   drag.el.style.position='';drag.el.style.left='';drag.el.style.top='';drag.el.style.pointerEvents='';drag.el.style.width='';drag.el.style.height='';
   document.removeEventListener('pointermove',onDrag);
   document.removeEventListener('pointerup',endDrag);
   document.removeEventListener('pointercancel',cancelDrag);
+  document.removeEventListener('touchmove',onDragTouch);
+  document.removeEventListener('touchend',endDragTouch);
+  document.removeEventListener('touchcancel',cancelDragTouch);
   liveCanvases.forEach(c=>c.classList.remove('drop-target'));
   drag=null;
 }
@@ -821,16 +845,7 @@ function magnetSnap(mi,si,piece,nx,ny,exceptIdx){
   return best;
 }
 
-function endDrag(e){
-  if(!drag) return;
-  clearTimeout(drag.timer);
-  document.removeEventListener('pointermove',onDrag);
-  document.removeEventListener('pointerup',endDrag);
-  document.removeEventListener('pointercancel',cancelDrag);
-  liveCanvases.forEach(c=>c.classList.remove('drop-target'));
-
-  if(!drag.lifted){drag.el.classList.remove('armed');drag=null;return;}
-
+function _dropPiece(){
   const el=drag.el,piece=drag.piece;
   el.style.pointerEvents='none';
   const target=document.elementFromPoint(drag.lastX,drag.lastY);
@@ -869,10 +884,36 @@ function endDrag(e){
       }
     }
   }
-  el.classList.remove('lifting');el.style.position='';el.style.left='';el.style.top='';el.style.pointerEvents='';el.style.width='';el.style.height='';
+}
+
+function endDrag(e){
+  if(!drag) return;
+  clearTimeout(drag.timer);
+  document.removeEventListener('pointermove',onDrag);
+  document.removeEventListener('pointerup',endDrag);
+  document.removeEventListener('pointercancel',cancelDrag);
+  document.removeEventListener('touchmove',onDragTouch);
+  document.removeEventListener('touchend',endDragTouch);
+  document.removeEventListener('touchcancel',cancelDragTouch);
+  liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+
+  if(!drag.lifted){drag.el.classList.remove('armed');drag=null;return;}
+
+  _dropPiece();
+  drag.el.classList.remove('lifting');drag.el.style.position='';drag.el.style.left='';drag.el.style.top='';drag.el.style.pointerEvents='';drag.el.style.width='';drag.el.style.height='';
   drag=null;
   refreshLive();
 }
+
+function endDragTouch(e){
+  if(!drag) return;
+  if(e.touches&&e.touches.length) return;
+  const ct=e.changedTouches?e.changedTouches[0]:null;
+  if(ct){drag.lastX=ct.clientX;drag.lastY=ct.clientY;}
+  endDrag(e);
+}
+
+function cancelDragTouch(){ cancelDrag(); }
 
 function refreshLive(){
   const scrollY=window.scrollY;
