@@ -708,11 +708,10 @@ function renderResults(){
 
 window.addEventListener('resize',()=>{ if(layout) liveCanvases.forEach(c=>{ if(c.isConnected) positionPieces(c,c.clientWidth/c._L); }); });
 
-/* ---------------- السحب والإفلات الاحترافي ---------------- */
-const HOLD_MS=180;
-const MOVE_TOL=8;
+/* ---------------- السحب والإفلات الاحترافي (ضغط مستمر) ---------------- */
+const HOLD_MS=200;
+const MOVE_TOL=9;
 let drag=null;
-let _floatingAttached=false;
 
 function startDrag(e){
   if(e.button && e.button!==0) return;
@@ -720,18 +719,14 @@ function startDrag(e){
   const canvas=el.parentElement;
   const r=el.getBoundingClientRect();
   const mi=+canvas.dataset.materialIdx, si=+canvas.dataset.sheetIdx, pi=+el.dataset.pi;
-  if(drag&&drag.lifted){
-    if(drag.fromMaterialIdx===mi&&drag.fromSheetIdx===si&&drag.fromPieceIdx===pi){ cancelLift(); return; }
-    cancelLift();
-  }
-  drag={el,canvas,fromMaterialIdx:mi,fromSheetIdx:si,fromPieceIdx:pi,
-    piece:layout[mi].sheets[si].pieces[pi],
-    offX:e.clientX-r.left,offY:e.clientY-r.top,w:r.width,h:r.height,
-    startX:e.clientX,startY:e.clientY,lastX:e.clientX,lastY:e.clientY,
-    lifted:false,pointerId:e.pointerId,ghost:null};
-  try{el.setPointerCapture(e.pointerId);}catch(_){}
+  drag={ el, canvas, fromMaterialIdx:mi, fromSheetIdx:si, fromPieceIdx:pi,
+         piece:layout[mi].sheets[si].pieces[pi],
+         offX:e.clientX-r.left, offY:e.clientY-r.top, w:r.width, h:r.height,
+         startX:e.clientX, startY:e.clientY, lastX:e.clientX, lastY:e.clientY,
+         lifted:false, pointerId:e.pointerId };
+  try{ el.setPointerCapture(e.pointerId); }catch(_){}
   el.classList.add('armed');
-  drag.timer=setTimeout(lift,HOLD_MS);
+  drag.timer=setTimeout(lift, HOLD_MS);
   document.addEventListener('pointermove',onDrag);
   document.addEventListener('pointerup',endDrag);
   document.addEventListener('pointercancel',cancelDrag);
@@ -740,125 +735,48 @@ function startDrag(e){
 function lift(){
   if(!drag) return;
   drag.lifted=true;
-  const el=drag.el; el.classList.add('lifting');
-  if(navigator.vibrate) try{navigator.vibrate(20);}catch(_){}
-  const cs=getComputedStyle(el);
-  const ghost=document.createElement('div');
-  ghost.style.cssText='position:fixed;pointer-events:none;z-index:9999;border:2px solid #b5803c;border-radius:4px;background:'+cs.background+';box-shadow:0 14px 32px rgba(0,0,0,.38);opacity:.88;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#1f2933;text-align:center;overflow:hidden';
-  ghost.style.width=drag.w+'px'; ghost.style.height=drag.h+'px';
-  ghost.textContent=el.textContent||'';
-  document.body.appendChild(ghost);
-  drag.ghost=ghost;
+  const el=drag.el;
+  el.classList.remove('armed'); el.classList.add('lifting');
+  if(navigator.vibrate) try{ navigator.vibrate(25); }catch(_){}
+  el.style.position='fixed'; el.style.margin='0';
+  el.style.width=drag.w+'px'; el.style.height=drag.h+'px';
   moveFixed(drag.lastX,drag.lastY);
-  toast('💡 حرّك الشاشة ثم اضغط على اللوح المراد لوضع القطعة');
+  highlightTarget(drag.lastX,drag.lastY);
 }
 
-function moveFixed(x,y){
-  if(!drag||!drag.ghost) return;
-  drag.ghost.style.left=(x-drag.offX)+'px';
-  drag.ghost.style.top=(y-drag.offY)+'px';
+function moveFixed(x,y){ drag.el.style.left=(x-drag.offX)+'px'; drag.el.style.top=(y-drag.offY)+'px'; }
+
+function highlightTarget(x,y){
+  drag.el.style.pointerEvents='none';
+  const t=document.elementFromPoint(x,y);
+  drag.el.style.pointerEvents='';
+  const tc=t?(t.closest('.sheet-canvas')||(t.closest('.sheet-block')?t.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
+  liveCanvases.forEach(c=>c.classList.toggle('drop-target', c===tc));
 }
 
 function onDrag(e){
   if(!drag) return;
   drag.lastX=e.clientX; drag.lastY=e.clientY;
   if(!drag.lifted){
-    if(Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>MOVE_TOL) cancelDrag();
+    if(Math.hypot(e.clientX-drag.startX, e.clientY-drag.startY)>MOVE_TOL) cancelDrag();
     return;
   }
   e.preventDefault();
   moveFixed(e.clientX,e.clientY);
-}
-
-function endDrag(e){
-  if(!drag) return;
-  clearTimeout(drag.timer);
-  document.removeEventListener('pointermove',onDrag);
-  document.removeEventListener('pointerup',endDrag);
-  document.removeEventListener('pointercancel',cancelDrag);
-  if(!drag.lifted){drag.el.classList.remove('armed');drag=null;return;}
-  enterFloating();
-}
-
-function enterFloating(){
-  if(!drag||!drag.lifted||!drag.ghost) return;
-  drag.el.style.opacity='0.25';
-  drag.el.style.pointerEvents='none';
-  if(!_floatingAttached){
-    _floatingAttached=true;
-    document.addEventListener('pointerdown',_onFloatTap,true);
-    document.addEventListener('keydown',_onFloatKey);
-  }
-}
-
-function _onFloatTap(e){
-  if(!drag||!drag.lifted) return;
-  const target=e.target;
-  const tCanvas=target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null);
-  if(!tCanvas) return;
-  e.preventDefault(); e.stopPropagation();
-  const toMi=+tCanvas.dataset.materialIdx, toSi=+tCanvas.dataset.sheetIdx;
-  if(toMi!==drag.fromMaterialIdx){toast('⚠️ لا يمكن نقل القطعة إلى خامة مختلفة');cancelLift();return;}
-  const matL=layout[toMi].L, matW=layout[toMi].W;
-  if(drag.piece.l>matL+0.01||drag.piece.w>matW+0.01){toast('⚠️ القطعة أكبر من اللوح — رُفض');cancelLift();return;}
-  const cr=tCanvas.getBoundingClientRect();
-  const scale=tCanvas.clientWidth/matL;
-  const tapX=e.clientX, tapY=e.clientY;
-  let nx=(tapX-cr.left)/scale - drag.piece.l/2;
-  let ny=(tapY-cr.top)/scale - drag.piece.w/2;
-  nx=Math.max(0,Math.min(nx,matL-drag.piece.l));
-  ny=Math.max(0,Math.min(ny,matW-drag.piece.w));
-  const except=(toMi===drag.fromMaterialIdx&&toSi===drag.fromSheetIdx)?drag.fromPieceIdx:-1;
-  let pos=magnetSnap(toMi,toSi,drag.piece,nx,ny,except);
-  if(!pos) pos=findFreeSpot(toMi,toSi,drag.piece,nx,ny,except);
-  if(!pos){toast('⚠️ لا يوجد مكان كافٍ في هذا اللوح');return;}
-  drag.piece.x=Math.round(pos.x*10)/10; drag.piece.y=Math.round(pos.y*10)/10;
-  if(toSi!==drag.fromSheetIdx){
-    layout[drag.fromMaterialIdx].sheets[drag.fromSheetIdx].pieces.splice(drag.fromPieceIdx,1);
-    layout[toMi].sheets[toSi].pieces.push(drag.piece);
-    layout[drag.fromMaterialIdx].sheets=layout[drag.fromMaterialIdx].sheets.filter(s=>s.pieces.length>0);
-    layout=layout.filter(mg=>mg.sheets.length>0);
-  }
-  _detachFloat();
-  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
-  drag.el.classList.remove('lifting','armed');
-  drag=null;
-  refreshLive();
-  toast('✅ تم وضع القطعة');
-}
-
-function _onFloatKey(e){
-  if(e.key==='Escape') cancelLift();
-}
-
-function _detachFloat(){
-  _floatingAttached=false;
-  document.removeEventListener('pointerdown',_onFloatTap,true);
-  document.removeEventListener('keydown',_onFloatKey);
-}
-
-function cancelLift(){
-  if(!drag) return;
-  _detachFloat();
-  clearTimeout(drag.timer);
-  document.removeEventListener('pointermove',onDrag);
-  document.removeEventListener('pointerup',endDrag);
-  document.removeEventListener('pointercancel',cancelDrag);
-  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
-  if(drag.el){drag.el.classList.remove('lifting','armed');drag.el.style.opacity='';drag.el.style.pointerEvents='';}
-  drag=null;
-  refreshLive();
+  highlightTarget(e.clientX,e.clientY);
 }
 
 function cancelDrag(){
   if(!drag) return;
   clearTimeout(drag.timer);
+  drag.el.classList.remove('armed','lifting');
+  drag.el.style.position=''; drag.el.style.pointerEvents=''; drag.el.style.width=''; drag.el.style.height='';
   document.removeEventListener('pointermove',onDrag);
   document.removeEventListener('pointerup',endDrag);
   document.removeEventListener('pointercancel',cancelDrag);
-  if(drag.ghost){drag.ghost.remove();drag.ghost=null;}
-  if(drag.el){drag.el.classList.remove('lifting','armed');drag.el.style.opacity='';drag.el.style.pointerEvents='';}
-  drag=null;refreshLive();
+  liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+  drag=null;
+  refreshLive();
 }
 
 function overlapsAny(mi,si,piece,x,y,exceptIdx){
@@ -879,7 +797,7 @@ function findFreeSpot(mi,si,piece,wx,wy,exceptIdx){
     for(let gx=0;gx<=maxX+0.001;gx+=step){
       if(!overlapsAny(mi,si,piece,gx,gy,exceptIdx)){
         const d=(gx-wx)*(gx-wx)+(gy-wy)*(gy-wy);
-        if(d<bestD){bestD=d;best={x:gx,y:gy};}
+        if(d<bestD){ bestD=d; best={x:gx,y:gy}; }
       }
     }
   }
@@ -895,19 +813,80 @@ function magnetSnap(mi,si,piece,nx,ny,exceptIdx){
   ps.forEach((o,i)=>{if(i===exceptIdx) return;
     const right=o.x+o.l+kerf,left=o.x-piece.l-kerf;
     const below=o.y+o.w+kerf,above=o.y-piece.w-kerf;
-    add(right,o.y);add(right,o.y+o.w-piece.w);
-    add(left,o.y);add(left,o.y+o.w-piece.w);
-    add(o.x,below);add(o.x+o.l-piece.l,below);
-    add(o.x,above);add(o.x+o.l-piece.l,above);
+    const yTop=o.y,yBot=o.y+o.w-piece.w;
+    const xLeft=o.x,xRight=o.x+o.l-piece.l;
+    add(right,yTop);add(right,yBot);
+    add(left,yTop);add(left,yBot);
+    add(xLeft,below);add(xRight,below);
+    add(xLeft,above);add(xRight,above);
   });
   let best=null,bd=Infinity;
   for(const c of cand){
     if(c.x<-0.01||c.x>maxX+0.01||c.y<-0.01||c.y>maxY+0.01) continue;
     if(overlapsAny(mi,si,piece,c.x,c.y,exceptIdx)) continue;
     const d=(c.x-nx)*(c.x-nx)+(c.y-ny)*(c.y-ny);
-    if(d<bd){bd=d;best=c;}
+    if(d<bd){ bd=d; best=c; }
   }
   return best;
+}
+
+function endDrag(e){
+  if(!drag) return;
+  clearTimeout(drag.timer);
+  document.removeEventListener('pointermove',onDrag);
+  document.removeEventListener('pointerup',endDrag);
+  document.removeEventListener('pointercancel',cancelDrag);
+  liveCanvases.forEach(c=>c.classList.remove('drop-target'));
+
+  if(!drag.lifted){ drag.el.classList.remove('armed'); drag=null; return; }
+
+  const el=drag.el, piece=drag.piece;
+  el.style.pointerEvents='none';
+  const target=document.elementFromPoint(drag.lastX,drag.lastY);
+  el.style.pointerEvents='';
+  const tCanvas=target?(target.closest('.sheet-canvas')||(target.closest('.sheet-block')?target.closest('.sheet-block').querySelector('.sheet-canvas'):null)):null;
+
+  if(tCanvas){
+    const toMi=+tCanvas.dataset.materialIdx, toSi=+tCanvas.dataset.sheetIdx;
+    if(toMi!==drag.fromMaterialIdx){
+      toast('⚠️ لا يمكن نقل القطعة إلى خامة مختلفة');
+    } else {
+      const matL=layout[toMi].L, matW=layout[toMi].W;
+      if(piece.l>matL+0.01||piece.w>matW+0.01){
+        toast('⚠️ القطعة أكبر من اللوح — رُفض الإفلات');
+      } else {
+        const cr=tCanvas.getBoundingClientRect();
+        const scale=tCanvas.clientWidth/matL;
+        let nx=(drag.lastX-cr.left-drag.offX)/scale;
+        let ny=(drag.lastY-cr.top-drag.offY)/scale;
+        nx=Math.max(0,Math.min(nx,matL-piece.l));
+        ny=Math.max(0,Math.min(ny,matW-piece.w));
+        const except=(toMi===drag.fromMaterialIdx&&toSi===drag.fromSheetIdx)?drag.fromPieceIdx:-1;
+        let pos=magnetSnap(toMi,toSi,piece,nx,ny,except);
+        if(!pos) pos=findFreeSpot(toMi,toSi,piece,nx,ny,except);
+        if(!pos){
+          toast('⚠️ لا يوجد مكان كافٍ في هذا اللوح');
+        } else {
+          piece.x=Math.round(pos.x*10)/10; piece.y=Math.round(pos.y*10)/10;
+          if(toSi!==drag.fromSheetIdx){
+            layout[drag.fromMaterialIdx].sheets[drag.fromSheetIdx].pieces.splice(drag.fromPieceIdx,1);
+            layout[toMi].sheets[toSi].pieces.push(piece);
+            layout[drag.fromMaterialIdx].sheets=layout[drag.fromMaterialIdx].sheets.filter(s=>s.pieces.length>0);
+            layout=layout.filter(mg=>mg.sheets.length>0);
+          }
+        }
+      }
+    }
+  }
+  el.classList.remove('lifting'); el.style.position=''; el.style.pointerEvents=''; el.style.width=''; el.style.height='';
+  drag=null;
+  refreshLive();
+}
+
+function refreshLive(){
+  const scrollY=window.scrollY;
+  renderResults();
+  window.scrollTo(0,scrollY);
 }
 
 function refreshLive(){
