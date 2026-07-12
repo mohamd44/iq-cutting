@@ -715,7 +715,7 @@ let drag=null;
 
 /* --- Auto-scroll during drag --- */
 const SCROLL_ZONE=80;
-const SCROLL_MAX=14;
+const SCROLL_MAX=140;
 let _scrollRaf=null;
 let _scrollDir=0;
 function _scrollStep(){
